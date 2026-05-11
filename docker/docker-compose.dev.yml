@@ -1,0 +1,97 @@
+# Local dev compose for QrSiparis Control Center.
+# Postgres + Redis + (optionally) the cc-app and cc-worker built locally.
+# Port 3001 chosen to avoid collision with qrsiparis-app (port 3000).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: qrsiparis-cc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: qrsiparis
+      POSTGRES_PASSWORD: qrsiparis-dev-password
+      POSTGRES_DB: qrsiparis_cc
+    ports:
+      - '5432:5432'
+    volumes:
+      - cc-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U qrsiparis -d qrsiparis_cc']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: qrsiparis-cc-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    ports:
+      - '6379:6379'
+    volumes:
+      - cc-redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  cc-app:
+    profiles: ['full']
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: app
+    container_name: qrsiparis-cc-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      NODE_ENV: development
+      PORT: '3001'
+      DATABASE_URL: postgres://qrsiparis:qrsiparis-dev-password@postgres:5432/qrsiparis_cc
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '3001:3001'
+
+  cc-worker:
+    profiles: ['full']
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: worker
+    container_name: qrsiparis-cc-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://qrsiparis:qrsiparis-dev-password@postgres:5432/qrsiparis_cc
+      REDIS_URL: redis://redis:6379
+
+  # Coolify mock (optional, for offline-of-coolify development). Use `--profile mock`.
+  # Currently a placeholder; wiremock setup deferred until H7 worker.
+  coolify-mock:
+    profiles: ['mock']
+    image: wiremock/wiremock:3.10.0
+    container_name: qrsiparis-cc-coolify-mock
+    ports:
+      - '8080:8080'
+    command:
+      - --port
+      - '8080'
+      - --verbose
+
+volumes:
+  cc-postgres-data:
+  cc-redis-data:

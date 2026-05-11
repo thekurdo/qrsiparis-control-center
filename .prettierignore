@@ -1,0 +1,10 @@
+node_modules
+.next
+.turbo
+.vercel
+coverage
+dist
+build
+out
+drizzle/migrations
+pnpm-lock.yaml

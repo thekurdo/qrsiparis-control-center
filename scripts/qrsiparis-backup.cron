@@ -1,0 +1,12 @@
+# QrSipariş backup cron — runs as root on Hostinger VPS
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# Daily backup 03:00 (host)
+0 3 * * * root /usr/local/bin/qrsiparis-backup.sh >> /var/log/qrsiparis-backup.log 2>&1
+
+# Hourly snapshots per tenant (run inside each container via docker exec, or host iteration)
+0 * * * * root /usr/local/bin/qrsiparis-backup-hourly.sh >> /var/log/qrsiparis-backup.log 2>&1
+
+# Weekly integrity check Sunday 05:00
+0 5 * * 0 root /usr/local/bin/qrsiparis-integrity-check.sh >> /var/log/qrsiparis-integrity.log 2>&1

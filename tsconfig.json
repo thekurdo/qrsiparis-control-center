@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": false,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "moduleResolution": "bundler",
+    "module": "esnext",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "incremental": true,
+    "jsx": "preserve",
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "src/**/*",
+    ".next/types/**/*.ts",
+    "instrumentation.ts"
+  ],
+  "exclude": ["node_modules", "dist", "drizzle/migrations"]
+}

@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build
+.next/
+out/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Next.js / TS
+.next/
+*.tsbuildinfo
+next-env.d.ts
+
+# Drizzle (migrations are committed; meta journal is generated)
+drizzle/migrations/meta/_journal.json.bak
+
+# Uploads / runtime data
+uploads/
+data/
+backups/
+
+# Docker
+.docker-buildx/

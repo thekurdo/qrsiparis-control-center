@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-typecheck-test:
+    name: Lint / Typecheck / Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: qrsiparis
+          POSTGRES_PASSWORD: qrsiparis-ci-password
+          POSTGRES_DB: qrsiparis_cc_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qrsiparis -d qrsiparis_cc_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test (unit + integration)
+        env:
+          DATABASE_URL: postgres://qrsiparis:qrsiparis-ci-password@localhost:5432/qrsiparis_cc_ci
+          REDIS_URL: redis://localhost:6379
+          AUTH_SECRET: ci-test-secret-not-for-production-use-only
+          MASTER_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+        run: pnpm test
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 7

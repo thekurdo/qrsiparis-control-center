@@ -1,0 +1,93 @@
+# syntax=docker/dockerfile:1.7
+# QrSiparis Control Center — Multi-stage Dockerfile
+#
+# Per IMPLEMENTATION_NOTES.md §1 (two-image approach):
+#   docker build --target=app    -t qrsiparis-cc-app:${tag}    .
+#   docker build --target=worker -t qrsiparis-cc-worker:${tag} .
+#
+# `app` runs Next.js (port 3001 inside the container).
+# `worker` runs the BullMQ deployment worker (no listening port).
+
+# ---------- Stage: deps ----------
+FROM node:24-alpine AS deps
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+
+WORKDIR /app
+COPY package.json pnpm-lock.yaml* ./
+# Native modules: bcrypt, ssh2 may need build-essentials on alpine
+RUN apk add --no-cache --virtual .build-deps python3 make g++ openssh-client \
+    && pnpm install --frozen-lockfile --prod=false \
+    && apk del .build-deps
+
+# ---------- Stage: builder ----------
+FROM node:24-alpine AS builder
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+ARG APP_VERSION=dev
+ARG GIT_COMMIT=unknown
+ENV APP_VERSION=$APP_VERSION
+ENV GIT_COMMIT=$GIT_COMMIT
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Next.js standalone build (writes .next/standalone)
+RUN pnpm build
+
+# Compile worker(s) with tsx-friendly output for the worker image stage
+# (We still rely on `tsx` at runtime in the worker image since the worker is
+# not bundled by Next.)
+
+# ---------- Stage: app (runtime) ----------
+FROM node:24-alpine AS app
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=3001
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Add openssh-client for any host-key auxiliary tooling; ssh2 lib uses pure-JS
+RUN apk add --no-cache openssh-client tini
+
+# Bring in the Next.js standalone output + static + public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+# Drop privileges
+RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
+USER app
+
+EXPOSE 3001
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:3001/api/internal/health || exit 1
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "server.js"]
+
+# ---------- Stage: worker (runtime) ----------
+FROM node:24-alpine AS worker
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+RUN apk add --no-cache openssh-client tini
+
+# Worker needs full source + node_modules; it is not standalone-bundled.
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/scripts ./scripts
+
+RUN addgroup -S worker && adduser -S worker -G worker && chown -R worker:worker /app
+USER worker
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["pnpm", "run", "worker"]
