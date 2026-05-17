@@ -58,6 +58,8 @@ import { db, getDb } from '@/db/client';
 import { operatorUsers } from '@/db/schema';
 import { decrypt } from '@/lib/crypto/aes-gcm';
 
+import { recordAudit } from '@/lib/cc/audit';
+
 import { verifyAndConsumeBackupCode } from './backup-codes';
 import { comparePassword, fakeBcryptDelay } from './password';
 import { verifyTotpCode } from './totp';
@@ -293,8 +295,25 @@ export const authConfig = {
               .update(operatorUsers)
               .set({ twoFactorBackupCodes: result.remainingHashes })
               .where(eq(operatorUsers.id, user.id));
-            // AUDIT: caller writes `operator.login.backup_code_used`
-            // with metadata { remainingCount: result.remainingHashes.length }.
+            // Write the audit row INLINE rather than from a caller — the
+            // Auth.js v5 framework owns the `/api/auth/callback/credentials`
+            // POST handler, so there is no application-side "caller" in
+            // scope to attach IP/user-agent metadata after the fact. We
+            // omit ip/ua intentionally (recordAudit hashes 'unknown' when
+            // missing) because authorize() doesn't see the request headers.
+            // The remaining count makes forensic queries trivial: a row
+            // with remainingCount=0 means the user has burned all 4 codes
+            // and must reset 2FA.
+            await recordAudit({
+              userId: user.id,
+              action: 'backup_code_used',
+              entityType: 'operator_user',
+              entityId: user.id,
+              metadata: {
+                username: user.username,
+                remainingCount: result.remainingHashes.length,
+              },
+            });
           } else {
             // Password OK but neither TOTP nor backup code supplied —
             // signal the UI to prompt for 2FA on the next form step.
