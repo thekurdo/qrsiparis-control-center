@@ -60,3 +60,32 @@ export async function triggerDeployment(deploymentId: string): Promise<void> {
     },
   );
 }
+
+/**
+ * Remove a queued/active/failed job by id. Used by the
+ * `deployment-stuck-recovery` cron (Phase H11) to clean up the BullMQ
+ * job record after force-failing the deployment row.
+ *
+ * Returns `true` if a job was found and removed, `false` if no job
+ * existed for that id (e.g. the queue is empty because the worker
+ * already processed and pruned it).
+ *
+ * Why we don't `await job.moveToFailed()` instead: the cron's source of
+ * truth is the DB row, not BullMQ. Once we've stamped `status='failed'`
+ * on the row, the job's existence in Redis is just clutter — `remove()`
+ * is the cleanest way to drop it from the active/waiting list AND its
+ * `bull:deployments:<id>` hash without re-running BullMQ's failure
+ * handlers (which would re-emit `failed` events for an already-failed
+ * deployment).
+ *
+ * Idempotency: safe to call multiple times. The second call hits the
+ * `!job` path and returns false.
+ */
+export async function removeDeploymentJob(
+  deploymentId: string,
+): Promise<boolean> {
+  const job = await getQueue().getJob(deploymentId);
+  if (!job) return false;
+  await job.remove();
+  return true;
+}
