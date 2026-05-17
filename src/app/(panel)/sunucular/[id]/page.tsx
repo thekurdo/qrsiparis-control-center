@@ -7,6 +7,12 @@
  *   - Capacity widget (tenants / max_tenants_theoretical) with threshold bar.
  *   - CPU / RAM / Disk resource cards. Disk card emits warning text once
  *     usage reaches 75% (IMPL §1.PB3 disk-warning band).
+ *   - Last health-check timestamp + status (S3) — shows "Bilinmiyor" when
+ *     no probe has run yet so the operator can tell at a glance whether
+ *     the data is fresh or absent entirely.
+ *   - Live SSH `docker stats` panel via {@link ServerDockerStats} (S3).
+ *     Renders a "henüz çalıştırılmadı" placeholder until the client
+ *     component finishes its first SSH roundtrip.
  *   - Tenant roster linking to /musteriler/[id] for drill-down.
  *   - Coolify Senkronizasyonu placeholder — live sync arrives in Phase H7.
  */
@@ -16,6 +22,7 @@ import { eq, and, ne } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { requireOperatorAuth } from '@/lib/auth/middleware';
+import { ServerDockerStats } from '@/components/cc/ServerDockerStats';
 
 export default async function SunucuDetayPage({
   params,
@@ -94,9 +101,17 @@ export default async function SunucuDetayPage({
 
       {/* Stats grid */}
       <div className="grid gap-4 md:grid-cols-4">
-        <div className="bg-slate-800 rounded-lg p-4">
+        <div
+          data-testid="capacity-card"
+          data-tenant-count={occ}
+          data-tenant-capacity={cap}
+          className="bg-slate-800 rounded-lg p-4"
+        >
           <p className="text-sm text-slate-400 mb-2">Müşteri Sayısı</p>
-          <p className="text-3xl font-semibold text-slate-100 tabular-nums">
+          <p
+            className="text-3xl font-semibold text-slate-100 tabular-nums"
+            data-testid="capacity-text"
+          >
             {occ}
             <span className="text-base text-slate-500">/{cap}</span>
           </p>
@@ -127,8 +142,35 @@ export default async function SunucuDetayPage({
         />
       </div>
 
+      {/* Last health-check (S3). Renders "Bilinmiyor" when no probe has run. */}
+      <section
+        data-testid="last-health-check"
+        className="bg-slate-800 rounded-lg p-4"
+      >
+        <h2 className="font-semibold text-slate-100 mb-2">Son Sağlık Kontrolü</h2>
+        {server.lastHealthCheckAt ? (
+          <div className="flex items-center gap-3 text-sm text-slate-300">
+            <span data-testid="last-health-check-time">
+              {new Date(server.lastHealthCheckAt).toLocaleString('tr-TR')}
+            </span>
+            <span className="text-slate-500">·</span>
+            <HealthStatusLabel status={server.lastHealthStatus} />
+          </div>
+        ) : (
+          <p
+            className="text-sm text-slate-400"
+            data-testid="last-health-check-unknown"
+          >
+            Bilinmiyor — henüz sağlık kontrolü çalıştırılmadı.
+          </p>
+        )}
+      </section>
+
+      {/* Live SSH docker stats (S3). */}
+      <ServerDockerStats serverId={server.id} />
+
       {/* Tenant list on this server */}
-      <div className="bg-slate-800 rounded-lg p-4">
+      <div className="bg-slate-800 rounded-lg p-4" data-testid="tenant-list">
         <h2 className="font-semibold text-slate-100 mb-3">
           Bu sunucuda barınan müşteriler ({onThisServer.length})
         </h2>
@@ -137,6 +179,7 @@ export default async function SunucuDetayPage({
             <Link
               key={t.id}
               href={`/musteriler/${t.id}`}
+              data-testid="tenant-row"
               className="flex justify-between items-center p-3 bg-slate-700/50 hover:bg-slate-700 rounded transition-colors"
             >
               <div>
@@ -149,7 +192,12 @@ export default async function SunucuDetayPage({
             </Link>
           ))}
           {onThisServer.length === 0 && (
-            <p className="text-sm text-slate-400">Henüz müşteri yok</p>
+            <p
+              className="text-sm text-slate-400"
+              data-testid="tenant-list-empty"
+            >
+              Henüz müşteri yok
+            </p>
           )}
         </div>
       </div>
@@ -190,5 +238,46 @@ function ResourceCard({
       </div>
       {note && <p className="text-xs text-amber-400 mt-2">{note}</p>}
     </div>
+  );
+}
+
+function HealthStatusLabel({ status }: { status: string | null }) {
+  if (status === 'healthy') {
+    return (
+      <span
+        className="px-2 py-0.5 bg-emerald-900/40 text-emerald-300 rounded text-xs"
+        data-testid="last-health-check-status"
+      >
+        Sağlıklı
+      </span>
+    );
+  }
+  if (status === 'degraded') {
+    return (
+      <span
+        className="px-2 py-0.5 bg-amber-900/40 text-amber-300 rounded text-xs"
+        data-testid="last-health-check-status"
+      >
+        Düşük
+      </span>
+    );
+  }
+  if (status === 'critical') {
+    return (
+      <span
+        className="px-2 py-0.5 bg-red-900/40 text-red-300 rounded text-xs"
+        data-testid="last-health-check-status"
+      >
+        Kritik
+      </span>
+    );
+  }
+  return (
+    <span
+      className="px-2 py-0.5 bg-slate-700 text-slate-400 rounded text-xs"
+      data-testid="last-health-check-status"
+    >
+      Bilinmiyor
+    </span>
   );
 }

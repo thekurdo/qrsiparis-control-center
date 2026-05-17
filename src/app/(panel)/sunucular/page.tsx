@@ -17,7 +17,8 @@ import { sql } from 'drizzle-orm';
 import Link from 'next/link';
 
 export default async function SunucularPage() {
-  await requireOperatorAuth(['admin', 'operator']);
+  const session = await requireOperatorAuth(['admin', 'operator']);
+  const isAdmin = session.user.role === 'admin';
 
   const list = await db
     .select({
@@ -53,12 +54,15 @@ export default async function SunucularPage() {
     <div className="space-y-6">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-slate-100">Sunucular</h1>
-        <Link
-          href="/sunucular/yeni"
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium"
-        >
-          + Yeni Sunucu
-        </Link>
+        {isAdmin && (
+          <Link
+            href="/sunucular/yeni"
+            data-testid="new-server-button"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium"
+          >
+            Yeni Sunucu Ekle
+          </Link>
+        )}
       </header>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -70,6 +74,9 @@ export default async function SunucularPage() {
             <Link
               key={s.id}
               href={`/sunucular/${s.id}`}
+              data-testid="server-row"
+              data-server-id={s.id}
+              data-server-status={s.status}
               className="bg-slate-800 hover:bg-slate-700/80 rounded-lg p-5 transition-colors block"
             >
               <div className="flex items-start justify-between mb-3">
@@ -140,41 +147,73 @@ function HealthBadge({
 }) {
   if (status === 'maintenance') {
     return (
-      <span className="px-2 py-0.5 bg-slate-700 text-slate-300 rounded text-xs">
+      <span
+        data-testid="server-status-badge"
+        data-status="maintenance"
+        className="px-2 py-0.5 bg-slate-700 text-slate-300 rounded text-xs"
+      >
         Bakımda
       </span>
     );
   }
   if (status === 'decommissioned') {
     return (
-      <span className="px-2 py-0.5 bg-slate-700 text-slate-500 rounded text-xs">
+      <span
+        data-testid="server-status-badge"
+        data-status="decommissioned"
+        className="px-2 py-0.5 bg-slate-700 text-slate-500 rounded text-xs"
+      >
         Kullanım Dışı
       </span>
     );
   }
+  // status === 'active' (or 'error'). Surface health when known; otherwise an
+  // "Aktif" pill so the operator can tell the row is healthy enough to host
+  // tenants even when no probe has run yet (newly added VPS).
   if (health === 'critical') {
     return (
-      <span className="px-2 py-0.5 bg-red-900/40 text-red-300 rounded text-xs">
+      <span
+        data-testid="server-status-badge"
+        data-status="active"
+        data-health="critical"
+        className="px-2 py-0.5 bg-red-900/40 text-red-300 rounded text-xs"
+      >
         ⛔ Kritik
       </span>
     );
   }
   if (health === 'degraded') {
     return (
-      <span className="px-2 py-0.5 bg-amber-900/40 text-amber-300 rounded text-xs">
+      <span
+        data-testid="server-status-badge"
+        data-status="active"
+        data-health="degraded"
+        className="px-2 py-0.5 bg-amber-900/40 text-amber-300 rounded text-xs"
+      >
         ⚠ Düşük
       </span>
     );
   }
   if (health === 'healthy') {
     return (
-      <span className="px-2 py-0.5 bg-emerald-900/40 text-emerald-300 rounded text-xs">
+      <span
+        data-testid="server-status-badge"
+        data-status="active"
+        data-health="healthy"
+        className="px-2 py-0.5 bg-emerald-900/40 text-emerald-300 rounded text-xs"
+      >
         ● Sağlıklı
       </span>
     );
   }
   return (
-    <span className="px-2 py-0.5 bg-slate-700 text-slate-400 rounded text-xs">—</span>
+    <span
+      data-testid="server-status-badge"
+      data-status={status}
+      className="px-2 py-0.5 bg-slate-700 text-slate-300 rounded text-xs"
+    >
+      Aktif
+    </span>
   );
 }
 
