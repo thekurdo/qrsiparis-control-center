@@ -8,6 +8,13 @@
       "when": 1778991984803,
       "tag": "0000_sudden_venus",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779002595335,
+      "tag": "0001_tearful_calypso",
+      "breakpoints": true
     }
   ]
 }

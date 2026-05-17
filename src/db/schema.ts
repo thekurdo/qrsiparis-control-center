@@ -80,9 +80,21 @@ export const operatorUsers = pgTable(
     usernameUq: uniqueIndex('uq_operator_users_username').on(t.username),
     emailUq: uniqueIndex('uq_operator_users_email').on(t.email),
     isActiveIdx: index('idx_operator_users_is_active').on(t.isActive),
+    // The array tops out at 4 codes (set by /verify-setup) and counts DOWN
+    // as the operator consumes backup codes (S12). The prior constraint
+    // locked it at exactly 4 which contradicted the consume-on-login flow
+    // in `verifyAndConsumeBackupCode` — the UPDATE that trimmed the array
+    // tripped the constraint and rolled back, making a successful
+    // backup-code login impossible.
+    //
+    // We now enforce only the upper bound. `array_length(x, 1)` returns
+    // NULL for an empty array `{}`, so the COALESCE covers the burned-all
+    // and disabled cases. The user who has burned all 4 codes can still
+    // log in via TOTP — they're just locked out of the backup path until
+    // an admin resets their 2FA (which writes 4 fresh codes).
     backupCodesCount: check(
       'ck_operator_users_backup_codes_count',
-      sql`${t.twoFactorEnabled} = false OR array_length(${t.twoFactorBackupCodes}, 1) = 4`,
+      sql`COALESCE(array_length(${t.twoFactorBackupCodes}, 1), 0) <= 4`,
     ),
   }),
 );

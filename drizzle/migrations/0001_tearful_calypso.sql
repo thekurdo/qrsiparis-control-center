@@ -1,0 +1,2 @@
+ALTER TABLE "operator_users" DROP CONSTRAINT "ck_operator_users_backup_codes_count";--> statement-breakpoint
+ALTER TABLE "operator_users" ADD CONSTRAINT "ck_operator_users_backup_codes_count" CHECK (COALESCE(array_length("operator_users"."two_factor_backup_codes", 1), 0) <= 4);
