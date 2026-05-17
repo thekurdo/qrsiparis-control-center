@@ -31,7 +31,7 @@ const CRON_JOBS = [
     id: 'contract-expiry-warning',
     name: 'Sözleşme Bitişi Uyarısı',
     schedule: 'Günlük 09:00',
-    description: 'Sözleşmesi 30 gün içinde bitecek tenantları işaretler',
+    description: 'Sözleşmesi 7 gün içinde bitecek tenantları işaretler',
   },
   {
     id: 'daily-backup',
