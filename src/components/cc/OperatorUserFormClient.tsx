@@ -27,9 +27,14 @@
  *   POST   /api/internal/operator-users         (create)
  *   PATCH  /api/internal/operator-users/:id     (edit)
  *
- * On successful create, if `require2fa` was checked, we show a banner that
- * explicitly reminds the admin to share the credentials securely AND that
- * the user must complete 2FA setup before they can log in.
+ * On successful create we drop into the "user created" success state which
+ * shows the plaintext password ONCE in a `<pre data-testid=generated-password>`
+ * block. Admin must read it out-of-band before leaving the page — there's no
+ * server-side record of the plaintext (we only store `password_hash`), so
+ * navigating away or reloading permanently loses the value.
+ *
+ * If `require2fa` was checked, we additionally show a reminder banner that
+ * the user must complete 2FA setup before they can reach the panel.
  */
 
 import Link from 'next/link';
@@ -188,8 +193,10 @@ export function OperatorUserFormClient({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [copyHint, setCopyHint] = useState<string | null>(null);
   const [showCreatedReminder, setShowCreatedReminder] = useState<{
     username: string;
+    password: string;
     require2fa: boolean;
   } | null>(null);
 
@@ -252,8 +259,13 @@ export function OperatorUserFormClient({
         return;
       }
       if (mode === 'create') {
+        // Snapshot the plaintext password so we can render it ONCE on the
+        // success screen. We deliberately keep this in component state (not
+        // localStorage / URL) — navigating away or reloading the page must
+        // permanently lose the value. This matches "shown once" in the spec.
         setShowCreatedReminder({
           username: form.username,
+          password: form.password,
           require2fa: form.require2fa,
         });
       } else {
@@ -271,7 +283,7 @@ export function OperatorUserFormClient({
 
   if (showCreatedReminder) {
     return (
-      <div className="space-y-6 max-w-2xl">
+      <div className="space-y-6 max-w-2xl" data-testid="user-created-success">
         <header>
           <Link
             href="/sistem/kullanicilar"
@@ -285,9 +297,55 @@ export function OperatorUserFormClient({
         </header>
         <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 space-y-4">
           <p className="text-sm text-slate-200">
-            <span className="font-mono">{showCreatedReminder.username}</span>{' '}
+            <span className="font-mono" data-testid="created-username">
+              {showCreatedReminder.username}
+            </span>{' '}
             kullanıcısı başarıyla oluşturuldu.
           </p>
+
+          {/* Plaintext-password disclosure. The whole point of "shown once":
+              admins must read this value, communicate it out-of-band to the
+              new operator, and never see it again. After clicking away from
+              this page (or refreshing) the value is permanently lost. */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-300">
+                Geçici Şifre
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                    navigator.clipboard
+                      .writeText(showCreatedReminder.password)
+                      .then(() => {
+                        setCopyHint('Kopyalandı');
+                        setTimeout(() => setCopyHint(null), 2000);
+                      })
+                      .catch(() => {
+                        setCopyHint('Kopyalanamadı');
+                        setTimeout(() => setCopyHint(null), 2000);
+                      });
+                  }
+                }}
+                className="text-xs text-blue-400 hover:text-blue-300 hover:underline"
+                data-testid="copy-password-button"
+              >
+                {copyHint ?? 'Kopyala'}
+              </button>
+            </div>
+            <pre
+              className="bg-slate-900 border border-slate-700 rounded p-3 text-sm font-mono text-amber-200 break-all whitespace-pre-wrap select-all"
+              data-testid="generated-password"
+            >
+              {showCreatedReminder.password}
+            </pre>
+            <p className="text-xs text-slate-500">
+              Bu şifreyi şimdi kopyalayın. Sayfa kapandığında veya
+              yenilendiğinde tekrar görüntülenemez.
+            </p>
+          </div>
+
           {showCreatedReminder.require2fa ? (
             <div className="bg-amber-900/30 border border-amber-700 rounded-md px-4 py-3 text-sm text-amber-200">
               <strong>Hatırlatma:</strong> Bu kullanıcı 2FA kurmadan sisteme
@@ -301,7 +359,7 @@ export function OperatorUserFormClient({
           )}
           <p className="text-xs text-slate-500">
             Şifreyi kullanıcıya güvenli bir kanal üzerinden iletin (telefon,
-            Signal, vb.). Şifre tekrar gösterilmeyecek.
+            Signal, vb.).
           </p>
           <div className="flex gap-2 pt-2">
             <Link
