@@ -58,11 +58,10 @@ import { rawQuery, truncateAll } from '../fixtures/db';
 import { resetCounter } from '../fixtures/data';
 import { resetAllMocks } from '../fixtures/mocks';
 import { createServer } from '../fixtures/server.fixture';
-import { createTenant } from '../fixtures/tenant.fixture';
+import { createDeployableTenant } from '../fixtures/tenant.fixture';
 
 const ADMIN_USERNAME = process.env['DEFAULT_OPERATOR_USER'] ?? 'admin';
-const ADMIN_PASSWORD =
-  process.env['DEFAULT_OPERATOR_PASSWORD'] ?? 'AdminTest123!';
+const ADMIN_PASSWORD = process.env['DEFAULT_OPERATOR_PASSWORD'] ?? 'AdminTest123!';
 
 test.setTimeout(60_000);
 
@@ -92,9 +91,7 @@ async function loginWithTotp(
   await page.fill('input[name="password"]', ADMIN_PASSWORD);
   await Promise.all([
     page.waitForResponse(
-      (r) =>
-        r.url().includes('/api/auth/callback/credentials') &&
-        r.request().method() === 'POST',
+      (r) => r.url().includes('/api/auth/callback/credentials') && r.request().method() === 'POST',
       { timeout: 15_000 },
     ),
     page.click('button[type="submit"]'),
@@ -108,18 +105,14 @@ async function loginWithTotp(
 
   await Promise.all([
     page.waitForResponse(
-      (r) =>
-        r.url().includes('/api/auth/callback/credentials') &&
-        r.request().method() === 'POST',
+      (r) => r.url().includes('/api/auth/callback/credentials') && r.request().method() === 'POST',
       { timeout: 15_000 },
     ),
     page.click('button[type="submit"]'),
   ]);
 
   await page.waitForURL(
-    (u) =>
-      !u.toString().includes('/2fa-verify') &&
-      !u.toString().includes('/login'),
+    (u) => !u.toString().includes('/2fa-verify') && !u.toString().includes('/login'),
     { timeout: 15_000 },
   );
 }
@@ -130,10 +123,7 @@ async function loginWithTotp(
  * for the first deployment; anything else indicates worker/WireMock
  * misconfiguration).
  */
-async function waitForDeploymentSuccess(
-  deploymentId: string,
-  timeoutMs: number,
-): Promise<void> {
+async function waitForDeploymentSuccess(deploymentId: string, timeoutMs: number): Promise<void> {
   const start = Date.now();
   let last:
     | {
@@ -158,11 +148,7 @@ async function waitForDeploymentSuccess(
     }
     last = rows[0]!;
     if (last.status === 'success') return;
-    if (
-      last.status === 'failed' ||
-      last.status === 'rolled_back' ||
-      last.status === 'cancelled'
-    ) {
+    if (last.status === 'failed' || last.status === 'rolled_back' || last.status === 'cancelled') {
       throw new Error(
         `deployment ${deploymentId} ended unexpectedly: status=${last.status} code=${last.error_code} message=${last.error_message}`,
       );
@@ -202,36 +188,16 @@ test('S17 second concurrent POST returns 409, no phantom row + no second BullMQ 
   page,
 }) => {
   // ---- Phase 0: seed ------------------------------------------------------
+  // `createDeployableTenant` seeds `config_snapshot` so step02
+  // (CONFIG_GENERATE) doesn't fail before phase 2's concurrent POST has
+  // a chance to see an in-flight deployment. See the helper docstring
+  // for why this is required and what's expected to change in V1.5.
   const admin = await enable2faForAdmin();
   const server = await createServer();
-  const tenant = await createTenant(server.id, {
+  const tenant = await createDeployableTenant(server.id, {
     shortCode: 's17-concurrent',
     domain: 's17-concurrent.test.local',
   });
-
-  // The default tenant fixture doesn't populate `config_snapshot`, which
-  // is the field step02 (CONFIG_GENERATE) validates as non-empty. Without
-  // it the pipeline fails in ~25ms (well before phase 2's second POST
-  // gets a chance to see an in-flight deployment), defeating the entire
-  // test setup. Seed a minimal-but-shaped config_snapshot directly so the
-  // happy-path pipeline finishes ~3-4s as expected.
-  //
-  // The exact shape doesn't matter for V1 — step02 only checks
-  // `if (!ctx.tenant.configSnapshot)`. Downstream steps stub their
-  // work. V1.5 will land Zod validation against the customer-product's
-  // RestaurantConfig schema; this seed will need updating then.
-  await rawQuery(
-    `UPDATE tenants
-        SET config_snapshot = $1::jsonb
-      WHERE id = $2`,
-    [
-      JSON.stringify({
-        step1: { restaurantName: 'S17 Test' },
-        step3: { domain: 's17-concurrent.test.local' },
-      }),
-      tenant.id,
-    ],
-  );
 
   await loginWithTotp(page, admin.totp_secret_plain);
 
@@ -304,9 +270,7 @@ test('S17 second concurrent POST returns 409, no phantom row + no second BullMQ 
   // The message should clearly indicate that a deployment is already in
   // progress (Turkish — the operator-facing surface is TR-only per
   // Doc 17 §1). We pin the most-load-bearing keyword.
-  expect(body2.error.message.toLowerCase()).toMatch(
-    /devam eden|in progress|in[- ]?flight|zaten/i,
-  );
+  expect(body2.error.message.toLowerCase()).toMatch(/devam eden|in progress|in[- ]?flight|zaten/i);
   // Surfacing the in-flight deploymentId lets the UI redirect the operator
   // to the existing pipeline's log stream instead of starting a duplicate.
   expect(body2.error.details?.deploymentId).toBe(deploymentId1);
@@ -383,9 +347,7 @@ test('S17 second concurrent POST returns 409, no phantom row + no second BullMQ 
   expect(finalRows[0]!.id).toBe(deploymentId1);
   expect(finalRows[0]!.status).toBe('success');
   expect(finalRows[1]!.id).toBe(deploymentId3);
-  expect(['pending', 'in_progress', 'success']).toContain(
-    finalRows[1]!.status,
-  );
+  expect(['pending', 'in_progress', 'success']).toContain(finalRows[1]!.status);
 
   // Sanity: BullMQ job for deployment #3 was enqueued under its own id
   // (or already consumed). We just assert the queue accepted the second
