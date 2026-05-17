@@ -1,6 +1,5 @@
 'use client';
-import { useState, FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 interface DeployChecklist { dnsConfigured: boolean; sslReady: boolean; containerHealthcheck: boolean; loginUrlVerified: boolean; assetsUploaded: boolean; sponsoredEmailSent: boolean; }
 

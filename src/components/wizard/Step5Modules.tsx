@@ -1,5 +1,5 @@
 'use client';
-import { useState, FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 
 const TIER_DEFAULTS = {
   baslangic: { maxTables: 20, maxStaff: 5, maxProducts: 100, maxCategories: 10, maxStorageMb: 500, ordersPerMinute: 15, apiRequestsPerMinute: 100 },

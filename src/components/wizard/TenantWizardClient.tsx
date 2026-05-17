@@ -1,5 +1,5 @@
 /**
- * TenantWizardClient — orchestrates the 7-step onboarding flow (Phase H5).
+ * TenantWizardClient — orchestrates the 7-step onboarding flow (Phase H5/H5b).
  *
  * State model:
  *   - `step` (1..7) selects the rendered child component.
@@ -10,20 +10,28 @@
  *     can resume after a crash/refresh, short enough that abandoned drafts
  *     don't pile up forever.
  *
- * Steps 5-7 (modules / server pick / final review) ship in worker H5b; this
- * file renders Steps 1-4 and shows a placeholder for the rest. The placeholder
- * is intentionally non-blocking: H5b will swap it for the real components
- * without touching this orchestrator.
+ * Deploy flow (Step 7 → submit):
+ *   1. POST /api/internal/tenants with the full wizard state → tenantId
+ *   2. POST /api/internal/deployments with that tenantId + 'initial' type
+ *      → deploymentId
+ *   3. router.push(`/deployments/{deploymentId}`)
+ *
+ * On any failure the wizard stays on Step 7 with an error banner and the
+ * localStorage state intact so the operator can retry without re-typing.
  */
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 import { ProgressIndicator } from './ProgressIndicator';
 import { Step1BasicInfo } from './Step1BasicInfo';
 import { Step2Contract } from './Step2Contract';
 import { Step3Domain } from './Step3Domain';
 import { Step4Template } from './Step4Template';
+import { Step5Modules, type Step5Data } from './Step5Modules';
+import { Step6Server, type Step6Data } from './Step6Server';
+import { Step7Review } from './Step7Review';
 
 // ---------------------------------------------------------------------------
 // State shape — exported so future H5b components can import the union.
@@ -77,7 +85,9 @@ export interface WizardState {
   step2?: Step2Data;
   step3?: Step3Data;
   step4?: Step4Data;
-  // step5-7 (modules / server / review) added by H5b
+  step5?: Step5Data;
+  step6?: Step6Data;
+  step7?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,11 +102,12 @@ interface StorageEnvelope {
   data: WizardState;
 }
 
-// Server-passed shape for H5b's Step 6. Kept loose here because the
-// orchestrator only forwards it.
+// Server-passed shape for Step 6's picker.
 export interface ServerWithCapacity {
   id: string;
   name: string;
+  publicIp: string;
+  publicHostname: string | null;
   status: string;
   maxTenantsTheoretical: number;
   currentTenantCount: number;
@@ -109,12 +120,11 @@ export function TenantWizardClient({
 }: {
   servers: ServerWithCapacity[];
 }) {
-  // `servers` is consumed by Step 6 (H5b worker). We surface its length in
-  // the placeholder so an operator can sanity-check that the server list
-  // came through, and the import isn't reported as unused.
-  const serverCount = servers.length;
+  const router = useRouter();
   const [state, setState] = useState<WizardState>({ step: 1 });
   const [hydrated, setHydrated] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // --- Hydrate from localStorage on first client render ---
   // We deliberately gate `hydrated` so the second effect (which writes back
@@ -174,6 +184,69 @@ export function TenantWizardClient({
     setState((prev) => ({ ...prev, step: Math.max(1, prev.step - 1) }));
   }, []);
 
+  /**
+   * Chain `POST /api/internal/tenants` → `POST /api/internal/deployments`
+   * and navigate to the deploy-detail page.
+   *
+   * Both endpoints return the standard `{ success, data | error }` envelope.
+   * On any error we surface the message and stay on Step 7.
+   */
+  const deploy = useCallback(async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      // Step 1: create the tenant row
+      const tenantRes = await fetch('/api/internal/tenants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state),
+      });
+      const tenantJson = (await tenantRes.json()) as
+        | { success: true; data: { tenantId: string } }
+        | { success: false; error: { message: string } };
+      if (!tenantJson.success) {
+        throw new Error(tenantJson.error.message);
+      }
+      const tenantId = tenantJson.data.tenantId;
+
+      // Step 2: enqueue the initial deployment
+      const deployRes = await fetch('/api/internal/deployments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId,
+          deploymentType: 'initial',
+          triggerReason: 'Wizard ilk kurulum',
+        }),
+      });
+      const deployJson = (await deployRes.json()) as
+        | { success: true; data: { deploymentId: string } }
+        | { success: false; error: { message: string } };
+      if (!deployJson.success) {
+        throw new Error(deployJson.error.message);
+      }
+      const deploymentId = deployJson.data.deploymentId;
+
+      // Clear the wizard draft now that we've handed off to the runner.
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.removeItem(STORAGE_KEY);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      router.push(`/deployments/${deploymentId}`);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Bilinmeyen hata');
+      setSubmitting(false);
+    }
+  }, [router, state, submitting]);
+
+  const tier = state.step2?.tier ?? 'baslangic';
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <header>
@@ -216,23 +289,30 @@ export function TenantWizardClient({
           onBack={back}
         />
       )}
-      {state.step >= 5 && (
-        <div className="bg-slate-800 border border-slate-700 rounded-lg p-12 text-center">
-          <p className="text-slate-300 font-medium">Adım {state.step} / 7</p>
-          <p className="text-slate-400 text-sm mt-2">
-            Bu adım H5b worker tarafından implement edilecek.
-          </p>
-          <p className="text-slate-500 text-xs mt-1">
-            Aktif sunucu sayısı: {serverCount}
-          </p>
-          <button
-            type="button"
-            onClick={back}
-            className="mt-6 px-4 py-2 text-slate-300 hover:text-white border border-slate-700 rounded text-sm"
-          >
-            ← Geri
-          </button>
-        </div>
+      {state.step === 5 && (
+        <Step5Modules
+          data={state.step5}
+          tier={tier}
+          onNext={(d) => next('step5', d)}
+          onBack={back}
+        />
+      )}
+      {state.step === 6 && (
+        <Step6Server
+          data={state.step6}
+          servers={servers}
+          onNext={(d) => next('step6', d)}
+          onBack={back}
+        />
+      )}
+      {state.step === 7 && (
+        <Step7Review
+          state={state}
+          onBack={back}
+          onDeploy={deploy}
+          submitting={submitting}
+          error={submitError}
+        />
       )}
     </div>
   );

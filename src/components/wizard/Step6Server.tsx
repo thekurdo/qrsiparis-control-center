@@ -1,5 +1,5 @@
 'use client';
-import { useState, FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 
 export interface Step6Data { serverId: string; }
 
