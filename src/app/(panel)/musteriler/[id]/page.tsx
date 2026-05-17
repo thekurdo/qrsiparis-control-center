@@ -32,6 +32,7 @@ import {
 } from '@/components/StatusPill';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/Tabs';
 import { formatTl } from '@/lib/utils/format-tl';
+import { EXPECTED_TENANT_SCHEMA_VERSION } from '@/lib/crons/tenant-schema-drift-detector';
 
 function formatDate(d: Date | null): string {
   if (!d) return '—';
@@ -89,6 +90,15 @@ export default async function TenantDetailPage({
   const addressSummary = [tenant.city, tenant.address]
     .filter(Boolean)
     .join(', ');
+
+  // Schema drift surface (R18). The cron writes a `tenant.schema_drift`
+  // audit row daily, but the banner doesn't need to wait for it — we can
+  // compute the drift state inline from the same comparison the cron
+  // makes. Cancelled tenants are exempt (they won't receive a migration,
+  // so warning ops about them is pure noise — matches the cron filter).
+  const isSchemaDrifted =
+    tenant.status !== 'cancelled' &&
+    tenant.schemaVersion < EXPECTED_TENANT_SCHEMA_VERSION;
 
   return (
     <div className="space-y-6">
@@ -150,6 +160,22 @@ export default async function TenantDetailPage({
           </button>
         </div>
       </header>
+
+      {isSchemaDrifted ? (
+        <div
+          role="alert"
+          data-testid="schema-drift-banner"
+          data-tenant-version={tenant.schemaVersion}
+          data-expected-version={EXPECTED_TENANT_SCHEMA_VERSION}
+          className="rounded-lg border border-amber-700 bg-amber-900/30 px-4 py-3 text-sm text-amber-200"
+        >
+          <span className="font-semibold">Şema sürüm uyumsuzluğu:</span>{' '}
+          Bu müşterinin tenant veritabanı şeması v{tenant.schemaVersion}{' '}
+          sürümünde; control-center v{EXPECTED_TENANT_SCHEMA_VERSION}{' '}
+          bekliyor. Resume / config-update akışından önce aradaki
+          migration&apos;ların uygulanması gerekiyor.
+        </div>
+      ) : null}
 
       <Tabs defaultValue="genel">
         <TabsList>
