@@ -15,6 +15,13 @@
       "when": 1779002595335,
       "tag": "0001_tearful_calypso",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779667200000,
+      "tag": "0002_audit_log_immutable",
+      "breakpoints": true
     }
   ]
 }
