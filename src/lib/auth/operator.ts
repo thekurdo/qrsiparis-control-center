@@ -51,7 +51,7 @@
 
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { eq, sql } from 'drizzle-orm';
-import NextAuth, { type DefaultSession } from 'next-auth';
+import NextAuth, { CredentialsSignin, type DefaultSession } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 
 import { db, getDb } from '@/db/client';
@@ -61,6 +61,23 @@ import { decrypt } from '@/lib/crypto/aes-gcm';
 import { verifyAndConsumeBackupCode } from './backup-codes';
 import { comparePassword, fakeBcryptDelay } from './password';
 import { verifyTotpCode } from './totp';
+
+/**
+ * Auth.js v5 throws our symbolic errors back at the client as the URL
+ * `?code=` parameter (the `?error=` parameter is always the error TYPE,
+ * i.e. `'CredentialsSignin'`). For any custom symbolic code to round-trip
+ * to the login page, we must throw a `CredentialsSignin` subclass (or
+ * instance) with `code` set — a plain `new Error('LOCKED_OUT')` gets
+ * wrapped as `CallbackRouteError` and silently becomes `error=Configuration`
+ * client-side, which is the catch-all "something went wrong" path.
+ *
+ * `code` is exposed in the URL, so do NOT include secrets / PII here.
+ */
+class CredentialsAuthError extends CredentialsSignin {
+  constructor(public override code: string) {
+    super();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Module-augmentation: extend Session/User/JWT with our custom claims
@@ -178,7 +195,7 @@ export const authConfig = {
         if (!username || !password) {
           // Generic error — no user enumeration leak.
           // AUDIT: caller writes `operator.login.invalid` with reason='missing_fields'.
-          throw new Error(AUTH_ERRORS.INVALID);
+          throw new CredentialsAuthError(AUTH_ERRORS.INVALID);
         }
 
         // 1. Look up the user (active only)
@@ -195,7 +212,7 @@ export const authConfig = {
         if (!user || !user.isActive) {
           await fakeBcryptDelay();
           // AUDIT: caller writes `operator.login.invalid` with username on the metadata.
-          throw new Error(AUTH_ERRORS.INVALID);
+          throw new CredentialsAuthError(AUTH_ERRORS.INVALID);
         }
 
         // 2. Lockout window check — even a correct password is rejected.
@@ -205,7 +222,7 @@ export const authConfig = {
           user.failedLoginLockedUntil.getTime() > now
         ) {
           // AUDIT: caller writes `operator.login.locked_out` with retryAfter metadata.
-          throw new Error(AUTH_ERRORS.LOCKED);
+          throw new CredentialsAuthError(AUTH_ERRORS.LOCKED);
         }
 
         // 3. Compare password
@@ -227,7 +244,7 @@ export const authConfig = {
             })
             .where(eq(operatorUsers.id, user.id));
           // AUDIT: caller writes `operator.login.invalid` with reason='wrong_password'.
-          throw new Error(AUTH_ERRORS.INVALID);
+          throw new CredentialsAuthError(AUTH_ERRORS.INVALID);
         }
 
         // 4. 2FA branch (if enabled on the user)
@@ -237,13 +254,13 @@ export const authConfig = {
             // (corrupted blob, wrong MASTER_KEY) we treat as TOTP-not-set
             // so we don't leak the storage shape.
             if (!user.twoFactorSecret) {
-              throw new Error(AUTH_ERRORS.TWO_FACTOR_NOT_ENABLED);
+              throw new CredentialsAuthError(AUTH_ERRORS.TWO_FACTOR_NOT_ENABLED);
             }
             let secretPlain: string;
             try {
               secretPlain = decrypt(user.twoFactorSecret);
             } catch {
-              throw new Error(AUTH_ERRORS.TWO_FACTOR_NOT_ENABLED);
+              throw new CredentialsAuthError(AUTH_ERRORS.TWO_FACTOR_NOT_ENABLED);
             }
             if (!verifyTotpCode(secretPlain, totpCode)) {
               // Roll the failed-counter for 2FA failure too — same R12 brake.
@@ -254,7 +271,7 @@ export const authConfig = {
                 })
                 .where(eq(operatorUsers.id, user.id));
               // AUDIT: caller writes `operator.login.invalid_totp`.
-              throw new Error(AUTH_ERRORS.INVALID_TOTP);
+              throw new CredentialsAuthError(AUTH_ERRORS.INVALID_TOTP);
             }
           } else if (backupCode) {
             const result = await verifyAndConsumeBackupCode(
@@ -269,7 +286,7 @@ export const authConfig = {
                 })
                 .where(eq(operatorUsers.id, user.id));
               // AUDIT: caller writes `operator.login.invalid_backup_code`.
-              throw new Error(AUTH_ERRORS.INVALID_BACKUP);
+              throw new CredentialsAuthError(AUTH_ERRORS.INVALID_BACKUP);
             }
             // Consume the code: write the trimmed array back.
             await db
@@ -282,7 +299,7 @@ export const authConfig = {
             // Password OK but neither TOTP nor backup code supplied —
             // signal the UI to prompt for 2FA on the next form step.
             // AUDIT: caller writes `operator.login.needs_2fa`.
-            throw new Error(AUTH_ERRORS.NEEDS_2FA);
+            throw new CredentialsAuthError(AUTH_ERRORS.NEEDS_2FA);
           }
         }
 

@@ -26,6 +26,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_BACKUP_CODE: 'Yedek kod hatalı veya kullanılmış.',
   TWO_FACTOR_NOT_ENABLED:
     'Bu hesap için 2FA kurulumu tamamlanmamış. Yönetici ile iletişime geçin.',
+  credentials: 'Doğrulama başarısız.',
   CredentialsSignin: 'Doğrulama başarısız.',
 };
 
@@ -61,9 +62,14 @@ export default function TwoFactorVerifyPage() {
         return;
       }
 
-      if (result.error) {
+      // See operator.ts CredentialsAuthError comment: Auth.js v5 packs our
+      // symbolic codes into `result.code` (URL ?code=...); `result.error`
+      // is always 'CredentialsSignin' for credentials rejections.
+      const errorKey =
+        (result as { code?: string | null }).code ?? result.error ?? null;
+      if (errorKey) {
         setError(
-          ERROR_MESSAGES[result.error] ??
+          ERROR_MESSAGES[errorKey] ??
             'Doğrulama başarısız. Bilgileri kontrol edip tekrar deneyin.',
         );
         return;

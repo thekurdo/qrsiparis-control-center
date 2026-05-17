@@ -4,16 +4,18 @@
  * /login — operator login form (Phase H9+ shell over the H2 auth backend).
  *
  * Uses Auth.js v5 client-side `signIn('credentials', ...)`. The Credentials
- * provider's `authorize()` (in `lib/auth/operator.ts`) throws symbolic
- * errors that surface here as `result.error` strings:
+ * provider's `authorize()` (in `lib/auth/operator.ts`) throws our
+ * `CredentialsAuthError` subclass with a symbolic `code`. Auth.js
+ * surfaces `code` on the client-side `signIn` result as `result.code`
+ * (NOT `result.error` — that's always the string `'CredentialsSignin'`
+ * for Credentials provider rejections per @auth/core's URL contract).
  *
- *   - `INVALID_CREDENTIALS`     → generic "kullanıcı adı / şifre hatalı"
- *   - `LOCKED_OUT`              → account locked banner
- *   - `NEEDS_TWO_FACTOR`        → redirect to /2fa-verify with username
+ *   - code `INVALID_CREDENTIALS`  → generic "kullanıcı adı / şifre hatalı"
+ *   - code `LOCKED_OUT`           → account locked banner
+ *   - code `NEEDS_TWO_FACTOR`     → redirect to /2fa-verify with username
  *
- * NextAuth maps any `Error` thrown out of `authorize` into the `?error=`
- * query param of the configured `pages.signIn`. We pass `redirect: false`
- * to keep the user on this page so we can render an inline error.
+ * We pass `redirect: false` to keep the user on this page so we can render
+ * an inline error.
  */
 
 import { signIn } from 'next-auth/react';
@@ -24,6 +26,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_CREDENTIALS: 'Kullanıcı adı veya şifre hatalı.',
   LOCKED_OUT:
     'Hesabınız çok sayıda başarısız deneme nedeniyle 15 dakikalığına geçici olarak kilitlendi.',
+  // Fallback for raw CredentialsSignin (e.g. if authorize() returned null
+  // instead of throwing — Auth.js then emits `code=credentials`).
+  credentials: 'Kullanıcı adı veya şifre hatalı.',
   CredentialsSignin: 'Kullanıcı adı veya şifre hatalı.',
 };
 
@@ -55,18 +60,24 @@ export default function LoginPage() {
         return;
       }
 
-      // NEEDS_TWO_FACTOR signal — surfaced as result.error since Auth.js
-      // can't distinguish it from generic CredentialsSignin failures.
-      if (result.error === 'NEEDS_TWO_FACTOR') {
+      // Auth.js v5 packs our symbolic codes (thrown via CredentialsAuthError)
+      // into `result.code`; `result.error` is always 'CredentialsSignin'
+      // for any rejection out of the credentials provider. Read both, prefer
+      // code (it's more specific).
+      const errorKey =
+        (result as { code?: string | null }).code ?? result.error ?? null;
+
+      // NEEDS_TWO_FACTOR signal — password OK but TOTP/backup not supplied.
+      if (errorKey === 'NEEDS_TWO_FACTOR') {
         const params = new URLSearchParams({ username });
         if (callbackUrl !== '/') params.set('callbackUrl', callbackUrl);
         router.push(`/2fa-verify?${params.toString()}`);
         return;
       }
 
-      if (result.error) {
+      if (errorKey) {
         setError(
-          ERROR_MESSAGES[result.error] ??
+          ERROR_MESSAGES[errorKey] ??
             'Giriş yapılamadı. Bilgileri kontrol edip tekrar deneyin.',
         );
         return;
