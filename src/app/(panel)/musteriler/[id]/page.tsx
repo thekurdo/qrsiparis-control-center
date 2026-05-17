@@ -31,6 +31,7 @@ import {
   TierBadge,
 } from '@/components/StatusPill';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/Tabs';
+import { TenantLifecycleActions } from '@/components/cc/TenantLifecycleActions';
 import { formatTl } from '@/lib/utils/format-tl';
 import { EXPECTED_TENANT_SCHEMA_VERSION } from '@/lib/crons/tenant-schema-drift-detector';
 
@@ -158,6 +159,14 @@ export default async function TenantDetailPage({
           >
             SSH (V1.5)
           </button>
+          {/* S13 — pause/resume/cancel. Cancelled tenants get a disabled
+              row of buttons (TenantLifecycleActions handles that), so the
+              UI still shows the available action vocabulary while the
+              status pill above explains why nothing is clickable. */}
+          <TenantLifecycleActions
+            tenantId={tenant.id}
+            status={tenant.status}
+          />
         </div>
       </header>
 

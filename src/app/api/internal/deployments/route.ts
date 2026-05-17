@@ -104,6 +104,30 @@ export async function POST(req: NextRequest) {
   if (!tenant) {
     return errorResponse('NOT_FOUND', 'Müşteri bulunamadı');
   }
+  // ---------------------------------------------------------------------
+  // Cancelled-tenant guard (Scenario S13).
+  //
+  // step01-precheck.ts ALSO checks `tenant.status === 'cancelled'` and
+  // throws PipelineError(TENANT_CANCELLED). We mirror that here at the
+  // HTTP layer so the failure happens BEFORE we insert a `deployments`
+  // row and BEFORE the BullMQ job is enqueued. Without this guard, an
+  // operator who clicked "Yeniden Dağıt" on a cancelled tenant would
+  // see a pipeline spin up, rollback, and stamp a `failed` deployment
+  // — confusing and wasteful of pipeline budget.
+  //
+  // The error envelope uses BUSINESS_RULE_VIOLATION (422) so the UI can
+  // distinguish "not allowed" (cancelled) from CONFLICT (409, already
+  // running) without an extra round-trip. The `details.errorCode` field
+  // surfaces the pipeline-aligned `TENANT_CANCELLED` token in case a
+  // future client wants to do code-driven branching.
+  // ---------------------------------------------------------------------
+  if (tenant.status === 'cancelled') {
+    return errorResponse(
+      'BUSINESS_RULE_VIOLATION',
+      'Müşteri iptal edilmiş — yeni dağıtım başlatılamaz',
+      { details: { errorCode: 'TENANT_CANCELLED', status: tenant.status } },
+    );
+  }
   if (!tenant.serverIdRef) {
     return errorResponse(
       'BUSINESS_RULE_VIOLATION',
