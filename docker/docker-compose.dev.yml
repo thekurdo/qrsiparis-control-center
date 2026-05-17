@@ -11,8 +11,10 @@ services:
       POSTGRES_USER: qrsiparis
       POSTGRES_PASSWORD: qrsiparis-dev-password
       POSTGRES_DB: qrsiparis_cc
+    # Mapped to host port 55432 to avoid clashing with a locally-installed
+    # Postgres on the default port (encountered on dev workstations).
     ports:
-      - '5432:5432'
+      - '55432:5432'
     volumes:
       - cc-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -26,8 +28,10 @@ services:
     container_name: qrsiparis-cc-redis
     restart: unless-stopped
     command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    # Mapped to host port 16379 to avoid clashing with any local Redis service
+    # and to stay out of Windows reserved dynamic-port range.
     ports:
-      - '6379:6379'
+      - '16379:6379'
     volumes:
       - cc-redis-data:/data
     healthcheck:
@@ -79,18 +83,21 @@ services:
       DATABASE_URL: postgres://qrsiparis:qrsiparis-dev-password@postgres:5432/qrsiparis_cc
       REDIS_URL: redis://redis:6379
 
-  # Coolify mock (optional, for offline-of-coolify development). Use `--profile mock`.
-  # Currently a placeholder; wiremock setup deferred until H7 worker.
+  # Coolify mock for local dev + E2E tests (enabled by default in dev compose).
   coolify-mock:
-    profiles: ['mock']
     image: wiremock/wiremock:3.10.0
     container_name: qrsiparis-cc-coolify-mock
+    # Mapped to host port 58080 to avoid clashing with anything else on 8080.
     ports:
-      - '8080:8080'
+      - '58080:8080'
+    volumes:
+      - ./wiremock/mappings:/home/wiremock/mappings:ro
+      - ./wiremock/__files:/home/wiremock/__files:ro
     command:
       - --port
       - '8080'
       - --verbose
+      - --global-response-templating
 
 volumes:
   cc-postgres-data:
