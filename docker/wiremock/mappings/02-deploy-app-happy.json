@@ -1,0 +1,15 @@
+{
+  "priority": 5,
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "/api/v1/applications/[^/]+/deploy"
+  },
+  "response": {
+    "status": 202,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "deployment_uuid": "test-deploy-{{randomValue length=8 type='ALPHANUMERIC'}}"
+    },
+    "transformers": ["response-template"]
+  }
+}

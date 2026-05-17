@@ -1,0 +1,17 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/v1/applications"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "uuid": "test-{{randomValue length=8 type='ALPHANUMERIC'}}",
+      "name": "{{jsonPath request.body '$.name'}}",
+      "domain": "{{jsonPath request.body '$.domain'}}",
+      "status": "created"
+    },
+    "transformers": ["response-template"]
+  }
+}

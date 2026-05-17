@@ -1,0 +1,17 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/v1/applications/[^/]+"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "uuid": "{{request.pathSegments.[3]}}",
+      "name": "test-app",
+      "domain": "test.local",
+      "status": "running"
+    },
+    "transformers": ["response-template"]
+  }
+}

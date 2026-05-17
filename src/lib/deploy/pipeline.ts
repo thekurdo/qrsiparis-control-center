@@ -31,6 +31,7 @@
  * needs parallelism inside a step it can spawn promises internally.
  */
 
+import type { CoolifyClient } from '@/lib/coolify';
 import type { Deployment, Server, Tenant } from '@/types/db';
 
 // ---------------------------------------------------------------------------
@@ -46,12 +47,21 @@ export interface PipelineContext {
   deployment: Deployment;
   tenant: Tenant;
   server: Server;
+  /** Coolify API client — points to real Coolify in prod, WireMock in dev/E2E. */
+  coolifyClient: CoolifyClient;
   /** App image tag pulled in step 04, e.g. `qrsiparis-app:1.4.2`. */
   appVersion?: string;
   /** Coolify application UUID — stamped after step 03. */
   coolifyUuid?: string;
   /** Container name as seen by Docker — derived from short_code in step 02. */
   containerName?: string;
+  /**
+   * Coolify deployment UUID — stamped after step 06 (CONTAINER_START) issues
+   * the `/deploy` call, used by step 07 (HEALTH_CHECK) for polling.
+   */
+  coolifyDeploymentUuid?: string;
+  /** Env vars to be injected into the container; built up in step 02 (CONFIG_GENERATE). */
+  envVars?: Record<string, string>;
   /** Wall-clock seconds the pipeline has consumed; final value written by runner. */
   durationSeconds?: number;
   /**

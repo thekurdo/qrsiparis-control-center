@@ -1,0 +1,22 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/v1/deployments/[^/]+",
+    "headers": {
+      "X-Mock-Mode": { "equalTo": "timeout" }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "uuid": "{{request.path.[3]}}",
+      "applicationUuid": "test-app",
+      "status": "in_progress",
+      "createdAt": "{{now offset='-5 seconds'}}"
+    },
+    "fixedDelayMilliseconds": 0,
+    "transformers": ["response-template"]
+  }
+}

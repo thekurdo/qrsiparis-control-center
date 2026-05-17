@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "/api/v1/applications/[^/]+/restart"
+  },
+  "response": {
+    "status": 202,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "deployment_uuid": "test-restart-{{randomValue length=8 type='ALPHANUMERIC'}}"
+    },
+    "transformers": ["response-template"]
+  }
+}

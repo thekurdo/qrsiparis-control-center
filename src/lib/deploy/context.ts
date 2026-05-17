@@ -28,6 +28,7 @@ import type IORedis from 'ioredis';
 
 import { db } from '@/db/client';
 import { deployments } from '@/db/schema';
+import { CoolifyClient } from '@/lib/coolify';
 import type { Deployment, Server, Tenant } from '@/types/db';
 
 import type { PipelineContext } from './pipeline';
@@ -37,6 +38,20 @@ export interface CreatePipelineContextArgs {
   tenant: Tenant;
   server: Server;
   redis: IORedis;
+  /** Optional injected client — tests pass a custom one; prod uses env. */
+  coolifyClient?: CoolifyClient;
+}
+
+function defaultCoolifyClient(): CoolifyClient {
+  const baseUrl = process.env['COOLIFY_API_URL'];
+  const token = process.env['COOLIFY_API_TOKEN'];
+  if (!baseUrl) {
+    throw new Error('COOLIFY_API_URL env var is required to build a deploy pipeline context');
+  }
+  return new CoolifyClient({
+    baseUrl,
+    token: token ?? '',
+  });
 }
 
 /**
@@ -53,6 +68,7 @@ export function createPipelineContext(
   args: CreatePipelineContextArgs,
 ): PipelineContext {
   const { deployment, tenant, server, redis } = args;
+  const coolifyClient = args.coolifyClient ?? defaultCoolifyClient();
   const buffered: string[] = [];
   const channel = `deployment:${deployment.id}:log`;
 
@@ -70,6 +86,7 @@ export function createPipelineContext(
     deployment,
     tenant,
     server,
+    coolifyClient,
     log(level, msg, meta) {
       const line = formatLine(level, msg, meta);
       buffered.push(line);

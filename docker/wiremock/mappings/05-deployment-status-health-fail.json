@@ -1,0 +1,23 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/v1/deployments/[^/]+",
+    "headers": {
+      "X-Mock-Mode": { "equalTo": "health-fail" }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "uuid": "{{request.path.[3]}}",
+      "applicationUuid": "test-app",
+      "status": "failed",
+      "createdAt": "{{now offset='-5 seconds'}}",
+      "finishedAt": "{{now}}",
+      "errorMessage": "Mock: container failed health probe"
+    },
+    "transformers": ["response-template"]
+  }
+}

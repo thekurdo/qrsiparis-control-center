@@ -1,0 +1,19 @@
+{
+  "priority": 5,
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/v1/deployments/[^/]+"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "uuid": "{{request.pathSegments.[3]}}",
+      "applicationUuid": "test-app",
+      "status": "success",
+      "createdAt": "{{now offset='-5 seconds'}}",
+      "finishedAt": "{{now}}"
+    },
+    "transformers": ["response-template"]
+  }
+}
