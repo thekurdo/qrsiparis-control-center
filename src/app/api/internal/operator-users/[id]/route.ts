@@ -254,15 +254,39 @@ export async function PATCH(
     return errorResponse('INTERNAL_ERROR', 'Güncelleme başarısız');
   }
 
+  const ipAddress = getClientIp(req);
+  const userAgent = getUserAgent(req);
+
   await recordAudit({
     userId: session.user.id,
     action: 'operator_user.updated',
     entityType: 'operator_user',
     entityId: id,
     metadata: { changed: changedKeys },
-    ipAddress: getClientIp(req),
-    userAgent: getUserAgent(req),
+    ipAddress,
+    userAgent,
   });
+
+  // Role demotion / promotion is a security-relevant event that deserves a
+  // dedicated audit action so admins can filter the log for "who changed
+  // someone's role and when" without scanning every `operator_user.updated`
+  // metadata blob. Convention is snake_case (matches `backup_code_used`
+  // from S12 — see src/lib/auth/operator.ts).
+  if (updates.role !== undefined && updates.role !== existing.role) {
+    await recordAudit({
+      userId: session.user.id,
+      action: 'operator_role_changed',
+      entityType: 'operator_user',
+      entityId: id,
+      metadata: {
+        username: existing.username,
+        oldRole: existing.role,
+        newRole: updates.role,
+      },
+      ipAddress,
+      userAgent,
+    });
+  }
 
   return successResponse({ id, changed: changedKeys });
 }
