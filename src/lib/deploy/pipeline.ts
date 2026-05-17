@@ -159,6 +159,23 @@ export type PipelineErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 // ---------------------------------------------------------------------------
 
 /**
+ * Summary of what `runPipeline()` accomplished before a failure.
+ *
+ * Attached to the thrown `PipelineError` via `(err as any).rollbackSummary`
+ * so the higher-level runner can record `deployment.rollback_completed`
+ * audit rows + drive UI affordances without re-parsing the log column.
+ *
+ * `failedStep` is the name of the forward step that raised; `rolledBackSteps`
+ * is the ordered list of completed steps whose `rollback()` was invoked
+ * (in reverse-execution order). A rollback whose cleanup threw is still
+ * listed here — failure surfaces as a `rollback.failed <NAME>` log line.
+ */
+export interface PipelineRollbackSummary {
+  failedStep: string | null;
+  rolledBackSteps: string[];
+}
+
+/**
  * Walk the supplied steps in order. On failure, replay rollback() in
  * reverse for every step whose forward() completed.
  *
@@ -168,6 +185,9 @@ export type PipelineErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
  *     `deployments.error_code` / `error_message` on the row.
  *   - Rollback errors are logged at `warn` level but do not abort the
  *     remaining rollbacks. We always try every cleanup we know about.
+ *   - On failure the thrown error is annotated with a `rollbackSummary`
+ *     property (typed as {@link PipelineRollbackSummary}) so callers can
+ *     write follow-up audit rows / metrics without re-parsing the log.
  *   - Logs are flushed at both the success and failure boundary.
  */
 export async function runPipeline(
@@ -175,10 +195,18 @@ export async function runPipeline(
   ctx: PipelineContext,
 ): Promise<void> {
   const completed: PipelineStep[] = [];
+  let failedStep: string | null = null;
   try {
     for (const step of steps) {
       ctx.log('info', `step.start ${step.name}`);
-      await step.forward(ctx);
+      try {
+        await step.forward(ctx);
+      } catch (e) {
+        // Capture which forward step blew up. We rethrow into the outer
+        // catch so the rollback loop runs uniformly.
+        failedStep = step.name;
+        throw e;
+      }
       completed.push(step);
       ctx.log('info', `step.done ${step.name}`);
     }
@@ -192,7 +220,9 @@ export async function runPipeline(
     // Rollback in reverse over a COPY — `Array.prototype.reverse()` mutates
     // in place and we don't want to leave `completed` in a flipped state.
     const rollbackOrder = [...completed].reverse();
+    const rolledBackSteps: string[] = [];
     for (const step of rollbackOrder) {
+      ctx.log('info', `rollback.start ${step.name}`);
       try {
         await step.rollback(ctx);
         ctx.log('info', `rollback.done ${step.name}`);
@@ -202,9 +232,48 @@ export async function runPipeline(
         // Intentionally swallow — a failing cleanup must not block
         // the remaining cleanups.
       }
+      rolledBackSteps.push(step.name);
+    }
+    ctx.log('info', `rollback.complete steps=${rolledBackSteps.length}`);
+
+    // Annotate the thrown error so the runner can pick the summary out
+    // of the catch without re-parsing the log column. We define the
+    // property non-enumerable so it doesn't leak into JSON-stringify
+    // contexts (Sentry, audit metadata) by surprise.
+    const summary: PipelineRollbackSummary = {
+      failedStep,
+      rolledBackSteps,
+    };
+    if (err instanceof Error) {
+      Object.defineProperty(err, 'rollbackSummary', {
+        value: summary,
+        enumerable: false,
+        configurable: true,
+        writable: false,
+      });
     }
 
     await ctx.flushLogs();
     throw err;
   }
+}
+
+/**
+ * Helper for runner code that catches an error from `runPipeline()` and
+ * wants the rollback summary if present. Returns `null` for errors thrown
+ * from anywhere outside the pipeline (e.g. row-load failures).
+ */
+export function getRollbackSummary(
+  err: unknown,
+): PipelineRollbackSummary | null {
+  if (
+    err &&
+    typeof err === 'object' &&
+    'rollbackSummary' in err &&
+    err.rollbackSummary &&
+    typeof err.rollbackSummary === 'object'
+  ) {
+    return err.rollbackSummary as PipelineRollbackSummary;
+  }
+  return null;
 }

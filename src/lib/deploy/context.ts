@@ -29,6 +29,7 @@ import type IORedis from 'ioredis';
 import { db } from '@/db/client';
 import { deployments } from '@/db/schema';
 import { CoolifyClient } from '@/lib/coolify';
+import type { CoolifyMockMode } from '@/types/coolify';
 import type { Deployment, Server, Tenant } from '@/types/db';
 
 import type { PipelineContext } from './pipeline';
@@ -42,15 +43,44 @@ export interface CreatePipelineContextArgs {
   coolifyClient?: CoolifyClient;
 }
 
+const VALID_MOCK_MODES: ReadonlySet<CoolifyMockMode> = new Set<CoolifyMockMode>([
+  'happy',
+  'deploy-fail',
+  'health-fail',
+  'timeout',
+]);
+
+/**
+ * Read `COOLIFY_MOCK_MODE` from the worker's environment so the test harness
+ * can drive the pipeline into specific WireMock failure scenarios without
+ * mutating per-deployment DB columns. Returns `undefined` if unset/invalid;
+ * production never sets it, so the CoolifyClient sends no `X-Mock-Mode`
+ * header and real Coolify ignores the codepath entirely.
+ */
+function readMockModeFromEnv(): CoolifyMockMode | undefined {
+  const raw = process.env['COOLIFY_MOCK_MODE'];
+  if (!raw) return undefined;
+  if (VALID_MOCK_MODES.has(raw as CoolifyMockMode)) {
+    return raw as CoolifyMockMode;
+  }
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[deploy.ctx] COOLIFY_MOCK_MODE=${raw} is not a recognised CoolifyMockMode; ignoring`,
+  );
+  return undefined;
+}
+
 function defaultCoolifyClient(): CoolifyClient {
   const baseUrl = process.env['COOLIFY_API_URL'];
   const token = process.env['COOLIFY_API_TOKEN'];
   if (!baseUrl) {
     throw new Error('COOLIFY_API_URL env var is required to build a deploy pipeline context');
   }
+  const mockMode = readMockModeFromEnv();
   return new CoolifyClient({
     baseUrl,
     token: token ?? '',
+    ...(mockMode ? { mockMode } : {}),
   });
 }
 

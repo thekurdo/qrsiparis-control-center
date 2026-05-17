@@ -74,13 +74,22 @@ describe('CoolifyClient (against WireMock)', () => {
     await expect(failClient.deployApp('test-app-1')).rejects.toThrow(CoolifyApiError);
   });
 
-  it('health-fail mode polls to a failed terminal state', async () => {
+  it('health-fail mode keeps the deploy job in success but reports the app as failed', async () => {
+    // `health-fail` models the "Coolify deployed the container, but the
+    // container itself fails its HEALTHCHECK after startup" scenario.
+    // Step06 (CONTAINER_START) polls the deployment job and should see
+    // `success`; step07 (HEALTH_CHECK) queries the app and should see
+    // `failed`, raising `HEALTH_CHECK_FAILED` from the pipeline.
     const failClient = new CoolifyClient({
       baseUrl: COOLIFY_URL,
       token: 'test-token',
       mockMode: 'health-fail',
     });
+
     const status = await failClient.pollDeployment('deploy-x', 10_000);
-    expect(status).toBe('failed');
+    expect(status).toBe('success');
+
+    const app = await failClient.getApp('app-x');
+    expect(app.status).toBe('failed');
   });
 });

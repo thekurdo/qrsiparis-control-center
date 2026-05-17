@@ -2,7 +2,7 @@
   "priority": 1,
   "request": {
     "method": "GET",
-    "urlPathPattern": "/api/v1/deployments/[^/]+",
+    "urlPathPattern": "/api/v1/applications/[^/]+",
     "headers": {
       "X-Mock-Mode": { "equalTo": "health-fail" }
     }
@@ -11,11 +11,10 @@
     "status": 200,
     "headers": { "Content-Type": "application/json" },
     "jsonBody": {
-      "uuid": "{{request.path.[3]}}",
-      "applicationUuid": "test-app",
-      "status": "success",
-      "createdAt": "{{now offset='-5 seconds'}}",
-      "finishedAt": "{{now}}"
+      "uuid": "{{request.pathSegments.[3]}}",
+      "name": "test-app",
+      "domain": "test.local",
+      "status": "failed"
     },
     "transformers": ["response-template"]
   }

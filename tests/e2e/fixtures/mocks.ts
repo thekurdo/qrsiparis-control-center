@@ -25,6 +25,57 @@ export async function resetCoolifyScenarios(): Promise<void> {
   await fetch(`${COOLIFY_ADMIN}/requests`, { method: 'DELETE' });
 }
 
+/**
+ * Drop every dynamically-installed mapping and reload the on-disk
+ * mappings under `docker/wiremock/mappings/`. Tests that inject runtime
+ * mappings via {@link addCoolifyMapping} MUST call this in `afterEach`
+ * so subsequent tests (or the next run) start from the canonical mapping
+ * set. `resetCoolifyScenarios()` deliberately doesn't do this because
+ * the request-journal/scenarios reset is the common case and the full
+ * mapping reload is slower (file IO inside the WireMock container).
+ */
+export async function resetCoolifyMappings(): Promise<void> {
+  await fetch(`${COOLIFY_ADMIN}/mappings/reset`, { method: 'POST' });
+}
+
+/**
+ * Install a runtime WireMock mapping. Returns the mapping id so callers
+ * can delete it surgically with {@link removeCoolifyMapping}, or rely on
+ * `resetCoolifyMappings()` in `afterEach` to drop all runtime mappings
+ * in one shot.
+ *
+ * Use this for per-test overrides that the on-disk JSON files don't
+ * cover (e.g., S8 needs `getApp` to return `failed` *regardless* of
+ * `X-Mock-Mode`, because injecting `COOLIFY_MOCK_MODE` into the running
+ * worker is more invasive than swapping a mapping).
+ */
+export async function addCoolifyMapping(
+  mapping: Record<string, unknown>,
+): Promise<string> {
+  const r = await fetch(`${COOLIFY_ADMIN}/mappings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(mapping),
+  });
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    throw new Error(
+      `[mocks] addCoolifyMapping failed status=${r.status} body=${body.slice(0, 200)}`,
+    );
+  }
+  const j = (await r.json()) as { id: string };
+  return j.id;
+}
+
+/**
+ * Remove a single runtime mapping by id (returned by
+ * {@link addCoolifyMapping}). Safe to call for an unknown id — WireMock
+ * returns 404 silently.
+ */
+export async function removeCoolifyMapping(id: string): Promise<void> {
+  await fetch(`${COOLIFY_ADMIN}/mappings/${id}`, { method: 'DELETE' });
+}
+
 export async function flushRedis(): Promise<void> {
   const redis = new IORedis(REDIS_URL, { lazyConnect: true });
   try {

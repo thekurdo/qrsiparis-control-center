@@ -25,10 +25,15 @@ import { eq } from 'drizzle-orm';
 import IORedis from 'ioredis';
 
 import { db } from '@/db/client';
-import { deployments, servers, tenants } from '@/db/schema';
+import { auditLog, deployments, servers, tenants } from '@/db/schema';
 
 import { createPipelineContext } from './context';
-import { PipelineError, runPipeline, type PipelineStep } from './pipeline';
+import {
+  getRollbackSummary,
+  PipelineError,
+  runPipeline,
+  type PipelineStep,
+} from './pipeline';
 import { initialDeploySteps } from './steps';
 
 let _redis: IORedis | null = null;
@@ -157,7 +162,10 @@ export async function executeDeployment(deploymentId: string): Promise<void> {
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
     const code = err instanceof PipelineError ? err.code : 'UNKNOWN_ERROR';
     const message = err instanceof Error ? err.message : String(err);
+    const summary = getRollbackSummary(err);
 
+    // Mark deployment row failed FIRST so the operator UI flips to red
+    // even if the follow-up tenant/audit writes hit a transient error.
     await db
       .update(deployments)
       .set({
@@ -168,6 +176,86 @@ export async function executeDeployment(deploymentId: string): Promise<void> {
         errorMessage: message,
       })
       .where(eq(deployments.id, deploymentId));
+
+    // Revert tenant state. `tenants.status` enum is
+    // `onboarding | active | paused | cancelled` — there's no
+    // `deploy_failed` value, so a failed deploy leaves the tenant in
+    // `onboarding` (i.e. "still needs operator follow-up"). Container
+    // status flips to `error` so the customer-detail card surfaces the
+    // failure even before the operator opens the deployments page.
+    // We deliberately scope the WHERE to the pre-failure status set so
+    // a concurrent operator action (S13 pause/cancel) can't be clobbered
+    // by this best-effort revert.
+    try {
+      await db
+        .update(tenants)
+        .set({
+          status: 'onboarding',
+          containerStatus: 'error',
+          updatedAt: new Date(),
+        })
+        .where(eq(tenants.id, deployment.tenantId));
+    } catch (revertErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[deploy.runner] failed to revert tenant ${deployment.tenantId} after deploy failure`,
+        revertErr,
+      );
+    }
+
+    // Audit rows: deployment.failed + (if rollback ran) deployment.rollback_completed.
+    // These follow the dotted naming convention used elsewhere
+    // (tenant.created, deployment.triggered, deploy.success).
+    try {
+      await db.insert(auditLog).values({
+        userId: deployment.triggeredByUserId ?? null,
+        action: 'deployment.failed',
+        entityType: 'deployment',
+        entityId: deployment.id,
+        metadata: {
+          tenantId: deployment.tenantId,
+          deploymentType: deployment.deploymentType,
+          errorCode: code,
+          errorMessage: message,
+          failedStep: summary?.failedStep ?? null,
+          durationSeconds: elapsed,
+        },
+        ipAddress: null,
+        userAgent: null,
+      });
+    } catch (auditErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[deploy.runner] failed to write deployment.failed audit for ${deployment.id}`,
+        auditErr,
+      );
+    }
+
+    if (summary && summary.rolledBackSteps.length > 0) {
+      try {
+        await db.insert(auditLog).values({
+          userId: deployment.triggeredByUserId ?? null,
+          action: 'deployment.rollback_completed',
+          entityType: 'deployment',
+          entityId: deployment.id,
+          metadata: {
+            tenantId: deployment.tenantId,
+            failedStep: summary.failedStep,
+            rolledBackSteps: summary.rolledBackSteps,
+            errorCode: code,
+          },
+          ipAddress: null,
+          userAgent: null,
+        });
+      } catch (auditErr) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[deploy.runner] failed to write deployment.rollback_completed audit for ${deployment.id}`,
+          auditErr,
+        );
+      }
+    }
+
     throw err;
   }
 }
