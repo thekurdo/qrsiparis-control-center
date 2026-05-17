@@ -19,19 +19,32 @@ export async function createTenant(
     status?: CreatedTenant['status'];
     containerStatus?: CreatedTenant['containerStatus'];
     containerName?: string;
+    /**
+     * Tenant's reported DB schema version. Defaults to 1 (V1 baseline).
+     * S16 (schema drift detector) flips this through the range
+     * [1 .. EXPECTED_TENANT_SCHEMA_VERSION] to drive the drift cron.
+     */
+    schemaVersion?: number;
   } = {},
 ): Promise<CreatedTenant> {
-  const { status: statusO, containerStatus: csO, containerName, ...rest } = overrides;
+  const {
+    status: statusO,
+    containerStatus: csO,
+    containerName,
+    schemaVersion: schemaVersionO,
+    ...rest
+  } = overrides;
   const d = tenantData(rest);
   const status = statusO ?? 'onboarding';
   const containerStatus = csO ?? 'not_deployed';
+  const schemaVersion = schemaVersionO ?? 1;
   const rows = await rawQuery<{ id: string }>(
     `INSERT INTO tenants (
        short_code, restaurant_name, contact_name, contact_phone, contact_email,
        city, tier, signed_at, contract_start_date, contract_end_date,
        monthly_fee_kurus, server_id_ref, domain, status, container_status,
        container_name, config_version, schema_version
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1,1)
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1,$17)
      RETURNING id`,
     [
       d.shortCode,
@@ -50,6 +63,7 @@ export async function createTenant(
       status,
       containerStatus,
       containerName ?? null,
+      schemaVersion,
     ],
   );
   return {
@@ -67,7 +81,9 @@ export async function createTenant(
  */
 export async function createActiveTenant(
   serverId: string,
-  overrides: Partial<TenantSeedData> = {},
+  overrides: Partial<TenantSeedData> & {
+    schemaVersion?: number;
+  } = {},
 ): Promise<CreatedTenant> {
   return createTenant(serverId, {
     ...overrides,
