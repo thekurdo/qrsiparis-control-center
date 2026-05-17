@@ -90,6 +90,45 @@ function computeContractEnd(startDateIso: string, durationMonths: number): Date 
   return end;
 }
 
+/**
+ * Postgres errors thrown by `pg` carry `code` (SQLSTATE) and `constraint`
+ * properties. Drizzle's transaction helper wraps the original error so we
+ * walk the `cause` chain (up to a depth of 5 to guard against pathological
+ * cycles) to find the first object that looks pg-shaped. Returns null if
+ * no pg-shaped error is found anywhere in the chain.
+ */
+interface PgLikeError {
+  code?: string;
+  constraint?: string;
+  detail?: string;
+  table?: string;
+}
+
+function findPgError(err: unknown): PgLikeError | null {
+  let current: unknown = err;
+  for (let i = 0; i < 5 && current; i++) {
+    if (current && typeof current === 'object') {
+      const obj = current as Record<string, unknown>;
+      if (typeof obj['code'] === 'string' && /^\d{5}$/.test(obj['code'])) {
+        return {
+          code: obj['code'],
+          constraint:
+            typeof obj['constraint'] === 'string'
+              ? obj['constraint']
+              : undefined,
+          detail:
+            typeof obj['detail'] === 'string' ? obj['detail'] : undefined,
+          table: typeof obj['table'] === 'string' ? obj['table'] : undefined,
+        };
+      }
+      current = obj['cause'];
+    } else {
+      break;
+    }
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   const session = await requireOperatorAuth(['admin']);
 
@@ -179,12 +218,42 @@ export async function POST(req: NextRequest) {
       return row;
     });
   } catch (err) {
+    // Detect Postgres unique-violation. The pg driver exposes both `code`
+    // (SQLSTATE — '23505' for unique violation) and `constraint` (the index
+    // name) on its error object. Drizzle's transaction wraps user errors
+    // but preserves the original `cause`, so we walk the chain to find the
+    // pg-shaped error. Falling back to message-substring matching guards
+    // against drivers that strip those fields in the future.
+    //
+    // (Before this fix the route returned a generic 500 on any unique
+    // collision — the message-regex below alone wasn't reliable because
+    // Drizzle wraps the pg error with a rollback-tagged message that
+    // doesn't always include "duplicate" / "unique" literally.)
+    const pgErr = findPgError(err);
     const message = err instanceof Error ? err.message : 'unknown';
-    if (/duplicate key/i.test(message) || /unique/i.test(message)) {
-      // Surface short_code / domain conflicts cleanly.
+    const isUniqueViolation =
+      pgErr?.code === '23505' ||
+      /duplicate key/i.test(message) ||
+      /unique/i.test(message);
+
+    if (isUniqueViolation) {
+      const constraint = pgErr?.constraint ?? '';
+      // Surface short_code / domain conflicts cleanly. Prefer the
+      // constraint name (precise) but fall back to message-substring
+      // matching so older driver versions still slot into the right field.
       const conflicts: Record<string, string> = {};
-      if (/short_code/i.test(message)) conflicts.shortCode = 'Bu kısa kod kullanılıyor';
-      if (/domain/i.test(message)) conflicts.domain = 'Bu domain kullanılıyor';
+      if (
+        constraint === 'uq_tenants_short_code' ||
+        /short_code/i.test(message)
+      ) {
+        conflicts.shortCode = 'Bu kısa kod kullanılıyor';
+      }
+      if (
+        constraint === 'uq_tenants_domain' ||
+        /\bdomain\b/i.test(message)
+      ) {
+        conflicts.domain = 'Bu domain kullanılıyor';
+      }
       return errorResponse('CONFLICT', 'Kısa kod veya domain zaten kayıtlı', {
         fieldErrors: conflicts,
       });

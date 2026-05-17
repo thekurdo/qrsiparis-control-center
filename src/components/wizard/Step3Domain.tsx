@@ -34,7 +34,10 @@ const schema = z.object({
     .string()
     .min(3, 'Domain çok kısa')
     .max(253, 'Domain çok uzun')
-    .regex(hostnameRegex, 'Geçerli bir domain giriniz (örn: ornek.com)'),
+    .regex(
+      hostnameRegex,
+      'Geçersiz domain formatı — geçerli bir domain giriniz (örn: ornek.com)',
+    ),
   useSubdomain: z.boolean(),
 });
 
@@ -169,7 +172,13 @@ export function Step3Domain({
           </p>
         )}
         {errors['domain'] && (
-          <p className="text-xs text-red-400 mt-1">{errors['domain']}</p>
+          <p
+            className="text-xs text-red-400 mt-1"
+            data-error="domain-format"
+            role="alert"
+          >
+            {errors['domain']}
+          </p>
         )}
       </div>
 
