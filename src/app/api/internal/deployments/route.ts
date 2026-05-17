@@ -18,13 +18,20 @@
  * Response: { deploymentId } so the UI can subscribe to the SSE log
  * stream (`GET /api/internal/deployments/{id}/log`, Phase H8).
  *
+ * Concurrency: a tenant can have AT MOST ONE in-flight deployment (status
+ * `pending` or `in_progress`). A second POST while one is already running
+ * returns 409 CONFLICT with code `DEPLOYMENT_IN_PROGRESS` and surfaces the
+ * existing deployment's id so the UI can redirect the operator to its log
+ * stream instead of starting a duplicate pipeline (S17).
+ *
  * Error surface:
  *   - NOT_FOUND     — tenant id doesn't exist
  *   - BUSINESS_RULE — tenant has no server assigned
+ *   - CONFLICT      — tenant already has an in-flight deployment (S17)
  *   - VALIDATION    — body shape wrong
  */
 
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { type NextRequest } from 'next/server';
 import { z } from 'zod';
 
@@ -49,6 +56,19 @@ const schema = z.object({
 });
 
 const DEFAULT_APP_VERSION = process.env['APP_VERSION'] ?? 'dev';
+
+/**
+ * Sentinel thrown inside the deployments-insert transaction when a
+ * concurrent POST sneaks in between the pre-tx existence check and the
+ * inside-tx re-check. Caught by the outer try/catch and converted into a
+ * 409 CONFLICT response without leaking transaction internals.
+ */
+class ConcurrentDeployError extends Error {
+  constructor(public readonly deploymentId: string) {
+    super(`Concurrent deployment ${deploymentId} already in flight`);
+    this.name = 'ConcurrentDeployError';
+  }
+}
 
 export async function POST(req: NextRequest) {
   const session = await requireOperatorAuth();
@@ -91,9 +111,64 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // ---------------------------------------------------------------------
+  // Concurrent deploy lock (S17).
+  //
+  // A tenant may have AT MOST ONE in-flight deployment at a time. The
+  // worker writes pipeline progress, container_status, and tenant.status
+  // — running two pipelines for the same tenant concurrently corrupts
+  // that state. Guard with a SELECT before INSERT.
+  //
+  // The check is done OUTSIDE the transaction (a cheap read) and ALSO
+  // re-asserted INSIDE the transaction so a TOCTOU race between two
+  // concurrent POSTs can't both pass the gate. The inner check uses the
+  // same WHERE clause and aborts the tx via a thrown sentinel if another
+  // request slipped a row in between SELECT and INSERT.
+  //
+  // BullMQ `jobId=deploymentId` provides a second line of defence: even
+  // if both POSTs somehow reached the enqueue step, the queue would
+  // dedupe the second job. The DB guard is still required because
+  // without it two `deployments` rows would still exist (with the
+  // worker only processing one of them — leaking the other in `pending`
+  // forever).
+  // ---------------------------------------------------------------------
+  const ACTIVE_STATUSES = ['pending', 'in_progress'] as const;
+  const existing = await db
+    .select({ id: deployments.id })
+    .from(deployments)
+    .where(
+      and(
+        eq(deployments.tenantId, body.tenantId),
+        inArray(deployments.status, [...ACTIVE_STATUSES]),
+      ),
+    )
+    .limit(1);
+  if (existing.length > 0) {
+    return errorResponse(
+      'CONFLICT',
+      'Bu müşteri için zaten devam eden bir dağıtım var',
+      { details: { deploymentId: existing[0]!.id } },
+    );
+  }
+
   let inserted: { id: string };
   try {
     inserted = await db.transaction(async (tx) => {
+      // TOCTOU re-check inside the tx — see header comment above.
+      const concurrent = await tx
+        .select({ id: deployments.id })
+        .from(deployments)
+        .where(
+          and(
+            eq(deployments.tenantId, body.tenantId),
+            inArray(deployments.status, [...ACTIVE_STATUSES]),
+          ),
+        )
+        .limit(1);
+      if (concurrent.length > 0) {
+        throw new ConcurrentDeployError(concurrent[0]!.id);
+      }
+
       const rows = await tx
         .insert(deployments)
         .values({
@@ -128,6 +203,13 @@ export async function POST(req: NextRequest) {
       return row;
     });
   } catch (err) {
+    if (err instanceof ConcurrentDeployError) {
+      return errorResponse(
+        'CONFLICT',
+        'Bu müşteri için zaten devam eden bir dağıtım var',
+        { details: { deploymentId: err.deploymentId } },
+      );
+    }
     // eslint-disable-next-line no-console
     console.error('[deployments][POST] insert failed', err);
     return errorResponse('INTERNAL_ERROR', 'Dağıtım kaydı oluşturulamadı');
