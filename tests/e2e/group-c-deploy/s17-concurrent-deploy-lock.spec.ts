@@ -49,7 +49,6 @@
  */
 
 import { test, expect } from '@playwright/test';
-import IORedis from 'ioredis';
 import { authenticator } from 'otplib';
 
 // Relative path — Playwright's TS loader doesn't honour the `@/` alias.
@@ -64,7 +63,6 @@ import { createTenant } from '../fixtures/tenant.fixture';
 const ADMIN_USERNAME = process.env['DEFAULT_OPERATOR_USER'] ?? 'admin';
 const ADMIN_PASSWORD =
   process.env['DEFAULT_OPERATOR_PASSWORD'] ?? 'AdminTest123!';
-const REDIS_URL = process.env['REDIS_URL'] ?? 'redis://localhost:16379';
 
 test.setTimeout(60_000);
 
@@ -174,18 +172,6 @@ async function waitForDeploymentSuccess(
   throw new Error(
     `deployment ${deploymentId} did not reach success in ${timeoutMs}ms (last status=${last?.status})`,
   );
-}
-
-/** Check whether a BullMQ job hash exists in Redis for this deployment id. */
-async function bullJobKeyExists(deploymentId: string): Promise<boolean> {
-  const redis = new IORedis(REDIS_URL, { lazyConnect: true });
-  try {
-    await redis.connect();
-    const exists = await redis.exists(`bull:deployments:${deploymentId}`);
-    return exists === 1;
-  } finally {
-    redis.disconnect();
-  }
 }
 
 test.beforeEach(async ({ page }) => {
@@ -402,10 +388,8 @@ test('S17 second concurrent POST returns 409, no phantom row + no second BullMQ 
   );
 
   // Sanity: BullMQ job for deployment #3 was enqueued under its own id
-  // (or already consumed). Either way the cardinality of `bull:deployments:*`
-  // hashes in Redis is bounded by the unique deployment ids we've issued.
-  // We just assert the queue accepted the second enqueue without throwing
-  // (which we'd have seen as a 500 from the route handler).
-  // The `removeDeploymentJob`/auto-prune semantics are covered by S9.
-  void bullJobKeyExists; // silence unused-var lint if helper isn't called above
+  // (or already consumed). We just assert the queue accepted the second
+  // enqueue without throwing (which we'd have seen as a 500 from the
+  // route handler). The `removeDeploymentJob` / auto-prune Redis
+  // bookkeeping is covered by S9.
 });
