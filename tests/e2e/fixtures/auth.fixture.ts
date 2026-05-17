@@ -57,8 +57,14 @@ async function handle2faIfPresent(page: Page, secret: string | null): Promise<vo
           'add a small `<span data-totp-secret={secret} hidden />` to the setup page for tests.',
       );
     }
-    await page.fill('input[name="totp"]', authenticator.generate(exposedSecret));
+    await page.fill('input[name="code"]', authenticator.generate(exposedSecret));
     await page.click('button[type="submit"], button:has-text("Doğrula")');
+
+    // After successful verification the wizard advances to the "backup
+    // codes shown once" phase — same URL, different in-page state. Click
+    // through to land on the panel home where the test can make
+    // post-condition assertions.
+    await page.click('button:has-text("Onayla ve Devam Et")');
     await page.waitForURL((u) => !u.toString().includes('/2fa-setup'), {
       timeout: 10_000,
     });
@@ -68,7 +74,7 @@ async function handle2faIfPresent(page: Page, secret: string | null): Promise<vo
         '[auth.fixture] /2fa-verify shown but no secret known. Seed flow expected.',
       );
     }
-    await page.fill('input[name="totp"]', authenticator.generate(secret));
+    await page.fill('input[name="code"]', authenticator.generate(secret));
     await page.click('button[type="submit"]');
     await page.waitForURL((u) => !u.toString().includes('/2fa-verify'));
   }

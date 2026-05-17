@@ -54,7 +54,7 @@ import { eq, sql } from 'drizzle-orm';
 import NextAuth, { type DefaultSession } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 
-import { db } from '@/db/client';
+import { db, getDb } from '@/db/client';
 import { operatorUsers } from '@/db/schema';
 import { decrypt } from '@/lib/crypto/aes-gcm';
 
@@ -126,7 +126,13 @@ export const authConfig = {
   // Account, VerificationToken). We use `operator_users` as our domain
   // table; the adapter's tables are unused under JWT strategy but the
   // adapter is still required for type-coherent provider wiring.
-  adapter: DrizzleAdapter(db),
+  //
+  // IMPORTANT: pass the underlying Drizzle instance (`getDb()`), NOT the
+  // Proxy-wrapped `db` re-export from `db/client.ts`. The adapter uses
+  // Drizzle's `is(value, PgDatabase)` brand check which inspects the
+  // prototype chain — the Proxy's empty target `{}` has the wrong
+  // prototype and the brand check fails with "Unsupported database type".
+  adapter: DrizzleAdapter(getDb()),
 
   session: {
     strategy: 'jwt' as const,

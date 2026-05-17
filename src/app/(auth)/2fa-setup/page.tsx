@@ -186,6 +186,13 @@ export default function TwoFactorSetupPage() {
             <code className="text-sm font-mono text-slate-200 break-all">
               {initData.secret}
             </code>
+            {/*
+              Hidden carrier so the E2E fixture can locate the TOTP secret
+              without OCR'ing the QR. The attribute is not exposed in any
+              way that affects layout or accessibility — the data is
+              already visible above as the manual entry key.
+            */}
+            <span hidden data-totp-secret={initData.secret} />
           </div>
         )}
 
