@@ -49,6 +49,11 @@ ENV COOLIFY_API_URL=http://placeholder:8000
 ENV COOLIFY_API_TOKEN=build_placeholder_token
 ENV DEFAULT_OPERATOR_EMAIL=build@placeholder.local
 
+# Ensure public/ exists even if the repo doesn't ship one yet; the app
+# stage unconditionally copies /app/public and would otherwise fail with
+# "public: not found".
+RUN mkdir -p /app/public
+
 # Next.js standalone build (writes .next/standalone)
 RUN pnpm build
 
