@@ -76,13 +76,16 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Add openssh-client for any host-key auxiliary tooling; ssh2 lib uses pure-JS
 RUN apk add --no-cache openssh-client tini
 
-# Bring in the Next.js standalone output + static + public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+# Create the unprivileged user FIRST, then COPY with --chown so we never
+# need a slow `chown -R /app` (which times out on Coolify's exec session
+# when node_modules has 100k+ files).
+RUN addgroup -S app && adduser -S app -G app
 
-# Drop privileges
-RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
+# Bring in the Next.js standalone output + static + public (already owned by app)
+COPY --from=builder --chown=app:app /app/.next/standalone ./
+COPY --from=builder --chown=app:app /app/.next/static ./.next/static
+COPY --from=builder --chown=app:app /app/public ./public
+
 USER app
 
 EXPOSE 3001
@@ -101,14 +104,18 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 RUN apk add --no-cache openssh-client tini
 
-# Worker needs full source + node_modules; it is not standalone-bundled.
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/tsconfig.json ./tsconfig.json
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/scripts ./scripts
+# Create user FIRST, then COPY --chown so we never need `chown -R /app`
+# (which on a fresh build times out Coolify's exec session because the
+# worker's node_modules has 100k+ files).
+RUN addgroup -S worker && adduser -S worker -G worker
 
-RUN addgroup -S worker && adduser -S worker -G worker && chown -R worker:worker /app
+# Worker needs full source + node_modules; it is not standalone-bundled.
+COPY --from=builder --chown=worker:worker /app/node_modules ./node_modules
+COPY --from=builder --chown=worker:worker /app/package.json ./package.json
+COPY --from=builder --chown=worker:worker /app/tsconfig.json ./tsconfig.json
+COPY --from=builder --chown=worker:worker /app/src ./src
+COPY --from=builder --chown=worker:worker /app/scripts ./scripts
+
 USER worker
 
 ENTRYPOINT ["/sbin/tini", "--"]
