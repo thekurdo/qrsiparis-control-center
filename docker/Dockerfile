@@ -37,6 +37,18 @@ ENV APP_VERSION=$APP_VERSION
 ENV GIT_COMMIT=$GIT_COMMIT
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Next.js's "Collecting page data" phase evaluates route handlers, which
+# can hit code that reads env (e.g. DB url, MASTER_KEY). Provide buildtime
+# placeholders here so the build doesn't crash. Runtime env in the
+# compose file overrides every one of these.
+ENV DATABASE_URL=postgres://build-placeholder:placeholder@127.0.0.1:5432/build
+ENV REDIS_URL=redis://127.0.0.1:6379
+ENV AUTH_SECRET=build_placeholder_auth_secret_not_used_at_runtime
+ENV MASTER_KEY=00000000000000000000000000000000000000000000000000000000deadbeef
+ENV COOLIFY_API_URL=http://placeholder:8000
+ENV COOLIFY_API_TOKEN=build_placeholder_token
+ENV DEFAULT_OPERATOR_EMAIL=build@placeholder.local
+
 # Next.js standalone build (writes .next/standalone)
 RUN pnpm build
 
