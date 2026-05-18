@@ -16,7 +16,11 @@
 
 import { ERROR_CODES, PipelineError, type PipelineStep } from '../pipeline';
 
-const DEPLOY_POLL_TIMEOUT_MS = 90_000;
+const DEPLOY_POLL_TIMEOUT_MS = 180_000;
+// Coolify reports a fresh dockerimage app as `exited:unhealthy` for a
+// brief window between create and first healthy state. Don't treat that
+// as a permanent failure — wait this long for it to clear.
+const EXITED_GRACE_MS = 60_000;
 
 export const step06ContainerStart: PipelineStep = {
   name: 'CONTAINER_START',
@@ -27,23 +31,16 @@ export const step06ContainerStart: PipelineStep = {
         'No coolifyUuid set — step 03 should have stamped it',
       );
     }
-    try {
-      // Coolify v4: triggerDeploy hits /api/v1/deploy?uuid=X.
-      // (Legacy `deployApp` targets the WireMock E2E path; not used in prod.)
-      const r = await ctx.coolifyClient.triggerDeploy(ctx.coolifyUuid, true);
-      ctx.coolifyDeploymentUuid = r.deployment_uuid;
-      ctx.log('info', `deploy issued deployment_uuid=${r.deployment_uuid}`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new PipelineError(ERROR_CODES.CONTAINER_START_FAILED, `triggerDeploy call failed: ${msg}`);
-    }
 
-    // V1: instead of polling deployment-detail (Coolify v4 returns numeric IDs
-    // in a deployments list which we'd need to map), poll the application
-    // status until it reads "running" or we time out. This is the same
-    // success criterion the operator UI uses.
+    // Step 03 created the app with `instant_deploy: true` (Coolify v4
+    // dockerimage endpoint), so the build/start is already underway.
+    // We just poll the app status; no explicit triggerDeploy call needed.
+    // (Calling it would race with the instant-deploy already running and
+    // can return `deployment_uuid: undefined`.)
+
     const start = Date.now();
     let lastStatus = '';
+    let firstExitedAt: number | null = null;
     while (Date.now() - start < DEPLOY_POLL_TIMEOUT_MS) {
       try {
         const app = await ctx.coolifyClient.getApp(ctx.coolifyUuid);
@@ -52,11 +49,23 @@ export const step06ContainerStart: PipelineStep = {
           ctx.log('info', `container started successfully (status=${lastStatus})`);
           return;
         }
-        if (lastStatus.startsWith('exited') || lastStatus.startsWith('failed')) {
+        if (lastStatus.startsWith('failed')) {
           throw new PipelineError(
             ERROR_CODES.CONTAINER_START_FAILED,
             `Coolify reports app failed: status=${lastStatus}`,
           );
+        }
+        if (lastStatus.startsWith('exited')) {
+          firstExitedAt ??= Date.now();
+          if (Date.now() - firstExitedAt > EXITED_GRACE_MS) {
+            throw new PipelineError(
+              ERROR_CODES.CONTAINER_START_FAILED,
+              `Coolify reports app stuck in exited state for ${EXITED_GRACE_MS}ms: status=${lastStatus}`,
+            );
+          }
+          ctx.log('info', `transient exited state (${lastStatus}) — will keep polling`);
+        } else {
+          firstExitedAt = null;
         }
       } catch (e) {
         if (e instanceof PipelineError) throw e;
