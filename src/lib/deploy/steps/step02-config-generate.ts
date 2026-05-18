@@ -89,34 +89,18 @@ function generateTenantCompose(args: {
   domain: string;
   restaurantName: string;
 }): string {
-  // Inline HTML safely (escape backticks + double quotes for YAML)
-  const safeName = args.restaurantName.replace(/"/g, '\\"').replace(/`/g, '');
-  const html = `<!doctype html>
-<html lang="tr"><head><meta charset="utf-8"><title>${safeName}</title>
-<style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}main{text-align:center;padding:2rem}h1{font-size:2.5rem;margin:0 0 .5rem}p{opacity:.7}</style>
-</head><body><main>
-<h1>${safeName}</h1>
-<p>QrSiparis · ${args.domain}</p>
-<p style="margin-top:2rem;font-size:.9rem">V1 placeholder — qrsiparis-app integration in V1.5</p>
-</main></body></html>`;
-
-  // Escape HTML for embedding in shell-style command
-  const htmlEscaped = html.replace(/'/g, `'\\''`);
-
+  // V1 minimal nginx — Coolify's compose parser is finicky about embedded
+  // shell commands with mixed quoting. Keep it simple: just nginx-alpine
+  // + the SERVICE_FQDN magic env so Traefik routes <domain> to port 80.
+  // V1.5 swaps `nginx:alpine` for the qrsiparis-app image with the
+  // tenant's config baked in.
   return `services:
   app:
     image: nginx:alpine
     restart: unless-stopped
     environment:
       - SERVICE_FQDN_APP_80=${args.domain}
-    command: >
-      sh -c "echo '${htmlEscaped}' > /usr/share/nginx/html/index.html && exec nginx -g 'daemon off;'"
-    labels:
-      - "traefik.enable=true"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ > /dev/null || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      - TENANT_SHORT_CODE=${args.shortCode}
+      - TENANT_RESTAURANT_NAME=${JSON.stringify(args.restaurantName)}
 `;
 }
