@@ -26,13 +26,17 @@ export const step07HealthCheck: PipelineStep = {
     }
     try {
       const app = await ctx.coolifyClient.getApp(ctx.coolifyUuid);
-      if (app.status !== 'running') {
+      // Coolify v4 returns statuses like `running:healthy`, `running:unhealthy`,
+      // `exited:exited`, etc. We accept any `running:*` because the public
+      // healthcheck is the user's concern, not the Coolify-side one.
+      const status = String(app.status || '');
+      if (!status.startsWith('running')) {
         throw new PipelineError(
           ERROR_CODES.HEALTH_CHECK_FAILED,
-          `Coolify reports app.status=${app.status} (expected 'running')`,
+          `Coolify reports app.status=${status} (expected 'running:*')`,
         );
       }
-      ctx.log('info', `health check OK — coolify status=${app.status}`);
+      ctx.log('info', `health check OK — coolify status=${status}`);
     } catch (e) {
       if (e instanceof PipelineError) throw e;
       const msg = e instanceof Error ? e.message : String(e);

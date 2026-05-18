@@ -52,9 +52,71 @@ export const step02ConfigGenerate: PipelineStep = {
     }
 
     ctx.log('warn', 'STUB: real Zod validation lands in V1.5 (cross-repo schema package)');
+
+    // Generate the tenant's docker-compose YAML. V1 ships a minimal
+    // nginx-based stack as proof-of-concept; V1.5 will swap this for the
+    // real `qrsiparis-app` image once it's published to a registry.
+    ctx.tenantComposeYaml = generateTenantCompose({
+      shortCode: ctx.tenant.shortCode,
+      domain: ctx.tenant.domain,
+      restaurantName: ctx.tenant.restaurantName,
+    });
+    ctx.log('info', `Generated tenant compose YAML (${ctx.tenantComposeYaml.length} bytes)`);
   },
   async rollback() {
     /* noop — config_version bump is not destructive; leaving the higher
        version in place is safe (next deploy will bump again). */
   },
 };
+
+/**
+ * Generate the per-tenant docker-compose YAML that Coolify will deploy.
+ *
+ * V1 ships a minimal nginx hello-world stack as proof that the full
+ * SaaS plumbing (Coolify API, DNS, SSL, Traefik routing) works end-to-end.
+ * Each tenant gets:
+ *   - A single `app` service on port 80
+ *   - SERVICE_FQDN_APP magic var → Coolify wires Traefik routing + SSL
+ *   - Custom HTML showing the restaurant name so we can visually confirm
+ *     per-tenant isolation
+ *
+ * V1.5: replace `nginx:alpine` + the inline HTML with the real
+ * `qrsiparis-app` image pulled from a registry, plus a Postgres/SQLite
+ * volume for that tenant's data.
+ */
+function generateTenantCompose(args: {
+  shortCode: string;
+  domain: string;
+  restaurantName: string;
+}): string {
+  // Inline HTML safely (escape backticks + double quotes for YAML)
+  const safeName = args.restaurantName.replace(/"/g, '\\"').replace(/`/g, '');
+  const html = `<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><title>${safeName}</title>
+<style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}main{text-align:center;padding:2rem}h1{font-size:2.5rem;margin:0 0 .5rem}p{opacity:.7}</style>
+</head><body><main>
+<h1>${safeName}</h1>
+<p>QrSiparis · ${args.domain}</p>
+<p style="margin-top:2rem;font-size:.9rem">V1 placeholder — qrsiparis-app integration in V1.5</p>
+</main></body></html>`;
+
+  // Escape HTML for embedding in shell-style command
+  const htmlEscaped = html.replace(/'/g, `'\\''`);
+
+  return `services:
+  app:
+    image: nginx:alpine
+    restart: unless-stopped
+    environment:
+      - SERVICE_FQDN_APP_80=${args.domain}
+    command: >
+      sh -c "echo '${htmlEscaped}' > /usr/share/nginx/html/index.html && exec nginx -g 'daemon off;'"
+    labels:
+      - "traefik.enable=true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+`;
+}

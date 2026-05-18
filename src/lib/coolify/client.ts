@@ -17,6 +17,8 @@ import {
   type CoolifyDeployment,
   type CoolifyDeploymentStatus,
   type CoolifyDeployResponse,
+  type CoolifyDockerComposeAppInput,
+  type CoolifyDockerComposeAppResult,
   type CoolifyMockMode,
 } from '@/types/coolify';
 
@@ -75,6 +77,55 @@ export class CoolifyClient {
 
   createApp(input: CoolifyCreateAppInput): Promise<CoolifyApp> {
     return this.request<CoolifyApp>('POST', '/api/v1/applications', input);
+  }
+
+  /**
+   * Real Coolify v4 docker-compose application creation. This is the path
+   * production tenant deployments take (each tenant = a Docker Compose stack
+   * on the shared VPS).
+   *
+   * Unlike the legacy `createApp` which targets WireMock E2E mocks at
+   * `/applications`, this hits `/applications/dockercompose` which is the
+   * actual typed endpoint exposed by Coolify v4.
+   *
+   * Returns the new application's UUID; subsequent deploy + status lookup
+   * use that UUID via `deploy(uuid)` and `getApp(uuid)`.
+   */
+  async createDockerComposeApp(
+    input: CoolifyDockerComposeAppInput,
+  ): Promise<CoolifyDockerComposeAppResult> {
+    // Coolify validates and rejects raw YAML — it must be base64-encoded.
+    const composeB64 = Buffer.from(input.composeYaml, 'utf-8').toString('base64');
+
+    const body: Record<string, unknown> = {
+      name: input.name,
+      project_uuid: input.projectUuid,
+      server_uuid: input.serverUuid,
+      environment_name: input.environmentName ?? 'production',
+      docker_compose_raw: composeB64,
+      instant_deploy: input.instantDeploy ?? false,
+    };
+    if (input.domains) body['domains'] = input.domains;
+    if (input.description) body['description'] = input.description;
+
+    return this.request<CoolifyDockerComposeAppResult>(
+      'POST',
+      '/api/v1/applications/dockercompose',
+      body,
+    );
+  }
+
+  /**
+   * Trigger a deployment for an existing Coolify application.
+   * Hits the v4 `/api/v1/deploy?uuid=...` endpoint.
+   */
+  triggerDeploy(applicationUuid: string, force = false): Promise<CoolifyDeployResponse> {
+    const params = new URLSearchParams({ uuid: applicationUuid });
+    if (force) params.set('force', 'true');
+    return this.request<CoolifyDeployResponse>(
+      'POST',
+      `/api/v1/deploy?${params.toString()}`,
+    );
   }
 
   deployApp(uuid: string): Promise<CoolifyDeployResponse> {

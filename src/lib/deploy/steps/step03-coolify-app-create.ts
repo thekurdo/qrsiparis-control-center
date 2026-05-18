@@ -1,13 +1,20 @@
 /**
  * Step 03 — COOLIFY_APP_CREATE.
  *
- * Forward: ask Coolify to create an application bound to the tenant's
- * shortCode + domain + assigned server. Stamps the returned UUID onto
- * `ctx.coolifyUuid` so step 06 can deploy it and the runner can persist
- * it to `tenants.container_name` (Phase H7+ wiring).
+ * Forward: ask the real Coolify v4 API to create a Docker Compose
+ * application for this tenant. Coolify provisions the Traefik labels
+ * (so SSL + routing are automatic) and returns an app UUID we use for
+ * the deploy + status calls in steps 06 and 07.
  *
- * Rollback: best-effort `deleteApp(uuid)`. We swallow errors because the
- * surrounding rollback loop already logs warnings and we want every
+ * The compose YAML for this tenant was generated in step02 and lives
+ * on `ctx.tenantComposeYaml`. The Coolify server / project UUIDs come
+ * from environment (`COOLIFY_PROJECT_UUID`, `COOLIFY_SERVER_UUID`) —
+ * for V1 we run a single VPS with a single project, so these are
+ * static config. V1.5 will look them up via `GET /api/v1/servers`
+ * once per server registered in our `servers` table.
+ *
+ * Rollback: best-effort `deleteApp(uuid)`. We swallow errors because
+ * the surrounding rollback loop already logs warnings and we want every
  * subsequent rollback to still run.
  *
  * Idempotency: if `ctx.coolifyUuid` is already set (retried pipeline),
@@ -23,20 +30,39 @@ export const step03CoolifyAppCreate: PipelineStep = {
       ctx.log('info', `idempotent skip — coolifyUuid=${ctx.coolifyUuid} already set`);
       return;
     }
+    if (!ctx.tenantComposeYaml) {
+      throw new PipelineError(
+        ERROR_CODES.CONFIG_INVALID,
+        'tenantComposeYaml missing — step02 should have generated it',
+      );
+    }
+
+    const projectUuid = process.env['COOLIFY_PROJECT_UUID'];
+    const serverUuid = process.env['COOLIFY_SERVER_UUID'];
+    if (!projectUuid || !serverUuid) {
+      throw new PipelineError(
+        ERROR_CODES.API_ERROR,
+        'COOLIFY_PROJECT_UUID and COOLIFY_SERVER_UUID env vars are required for Coolify v4 deploys',
+      );
+    }
+
     try {
-      const app = await ctx.coolifyClient.createApp({
-        name: ctx.tenant.shortCode,
-        domain: ctx.tenant.domain,
-        serverUuid: ctx.server.id,
-        dockerImage: ctx.appVersion ?? 'qrsiparis-app:latest',
-        envVars: ctx.envVars ?? {},
+      const result = await ctx.coolifyClient.createDockerComposeApp({
+        name: `rest-${ctx.tenant.shortCode}`,
+        projectUuid,
+        serverUuid,
+        environmentName: 'production',
+        composeYaml: ctx.tenantComposeYaml,
+        domains: `https://${ctx.tenant.domain}`,
+        description: `Tenant ${ctx.tenant.shortCode} — ${ctx.tenant.restaurantName}`,
+        instantDeploy: false,
       });
-      ctx.coolifyUuid = app.uuid;
+      ctx.coolifyUuid = result.uuid;
       ctx.containerName = ctx.containerName ?? `rest-${ctx.tenant.shortCode}`;
-      ctx.log('info', `coolify app created uuid=${app.uuid}`);
+      ctx.log('info', `coolify app created uuid=${result.uuid} domains=${JSON.stringify(result.domains)}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      throw new PipelineError(ERROR_CODES.API_ERROR, `Coolify createApp failed: ${msg}`);
+      throw new PipelineError(ERROR_CODES.API_ERROR, `Coolify createDockerComposeApp failed: ${msg}`);
     }
   },
   async rollback(ctx) {

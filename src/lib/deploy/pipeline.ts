@@ -62,6 +62,11 @@ export interface PipelineContext {
   coolifyDeploymentUuid?: string;
   /** Env vars to be injected into the container; built up in step 02 (CONFIG_GENERATE). */
   envVars?: Record<string, string>;
+  /**
+   * Docker Compose YAML for THIS tenant — generated in step02 and consumed
+   * by step03 (passed to Coolify v4's dockercompose endpoint, base64-encoded).
+   */
+  tenantComposeYaml?: string;
   /** Wall-clock seconds the pipeline has consumed; final value written by runner. */
   durationSeconds?: number;
   /**
