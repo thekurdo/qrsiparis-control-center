@@ -1,5 +1,10 @@
 'use client';
 
+// Auth pages depend on session/search-params and must never be statically
+// generated; Next.js 16's static-gen step otherwise blows up with
+// "useSearchParams() should be wrapped in a suspense boundary".
+export const dynamic = 'force-dynamic';
+
 /**
  * /login — operator login form (Phase H9+ shell over the H2 auth backend).
  *
