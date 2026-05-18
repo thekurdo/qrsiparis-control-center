@@ -66,6 +66,11 @@ FROM node:24-alpine AS app
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3001
+# Bind on every interface so Docker HEALTHCHECK (wget 127.0.0.1:3001)
+# and the Coolify Traefik upstream both reach the app. Next.js standalone
+# `server.js` reads HOSTNAME — without this it defaults to the container
+# hostname and only that interface accepts connections.
+ENV HOSTNAME=0.0.0.0
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Add openssh-client for any host-key auxiliary tooling; ssh2 lib uses pure-JS
