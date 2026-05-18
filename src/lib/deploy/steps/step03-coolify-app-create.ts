@@ -53,7 +53,9 @@ export const step03CoolifyAppCreate: PipelineStep = {
         serverUuid,
         environmentName: 'production',
         composeYaml: ctx.tenantComposeYaml,
-        domains: `https://${ctx.tenant.domain}`,
+        // Domain is routed via SERVICE_FQDN_APP_80 inside the compose YAML;
+        // Coolify v4's dockercompose endpoint rejects an explicit `domains`
+        // field ("This field is not allowed.")
         description: `Tenant ${ctx.tenant.shortCode} — ${ctx.tenant.restaurantName}`,
         instantDeploy: false,
       });
