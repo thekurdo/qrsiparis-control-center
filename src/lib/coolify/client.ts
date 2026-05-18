@@ -19,6 +19,8 @@ import {
   type CoolifyDeployResponse,
   type CoolifyDockerComposeAppInput,
   type CoolifyDockerComposeAppResult,
+  type CoolifyDockerImageAppInput,
+  type CoolifyDockerImageAppResult,
   type CoolifyMockMode,
 } from '@/types/coolify';
 
@@ -111,6 +113,37 @@ export class CoolifyClient {
     return this.request<CoolifyDockerComposeAppResult>(
       'POST',
       '/api/v1/applications/dockercompose',
+      body,
+    );
+  }
+
+  /**
+   * Create a Docker image application — Coolify v4 typed endpoint.
+   *
+   * We use this instead of `dockercompose` because the dockercompose
+   * endpoint in Coolify 4.0.0 returns a UUID but does NOT persist the
+   * application (GET/DELETE both 404). The dockerimage endpoint persists
+   * the app correctly and starts the container reachable via Traefik.
+   */
+  async createDockerImageApp(
+    input: CoolifyDockerImageAppInput,
+  ): Promise<CoolifyDockerImageAppResult> {
+    const body: Record<string, unknown> = {
+      name: input.name,
+      project_uuid: input.projectUuid,
+      server_uuid: input.serverUuid,
+      environment_name: input.environmentName ?? 'production',
+      docker_registry_image_name: input.imageName,
+      docker_registry_image_tag: input.imageTag,
+      ports_exposes: input.portsExposes,
+      instant_deploy: input.instantDeploy ?? true,
+    };
+    if (input.domains) body['domains'] = input.domains;
+    if (input.description) body['description'] = input.description;
+
+    return this.request<CoolifyDockerImageAppResult>(
+      'POST',
+      '/api/v1/applications/dockerimage',
       body,
     );
   }

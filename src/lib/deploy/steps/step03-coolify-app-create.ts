@@ -30,12 +30,6 @@ export const step03CoolifyAppCreate: PipelineStep = {
       ctx.log('info', `idempotent skip — coolifyUuid=${ctx.coolifyUuid} already set`);
       return;
     }
-    if (!ctx.tenantComposeYaml) {
-      throw new PipelineError(
-        ERROR_CODES.CONFIG_INVALID,
-        'tenantComposeYaml missing — step02 should have generated it',
-      );
-    }
 
     const projectUuid = process.env['COOLIFY_PROJECT_UUID'];
     const serverUuid = process.env['COOLIFY_SERVER_UUID'];
@@ -46,25 +40,35 @@ export const step03CoolifyAppCreate: PipelineStep = {
       );
     }
 
+    // V1: use `/applications/dockerimage` with nginx:alpine as a
+    // proof-of-concept tenant. The dockercompose endpoint in Coolify
+    // 4.0.0 returns a UUID but never persists the app (GET/DELETE 404).
+    // V1.5 swaps `nginx:alpine` for the real `qrsiparis-app` image.
+    const imageRef = process.env['TENANT_APP_IMAGE'] ?? 'nginx:alpine';
+    const [imageName, imageTagRaw] = imageRef.includes(':')
+      ? imageRef.split(':', 2)
+      : [imageRef, 'latest'];
+    const imageTag = imageTagRaw || 'latest';
+
     try {
-      const result = await ctx.coolifyClient.createDockerComposeApp({
+      const result = await ctx.coolifyClient.createDockerImageApp({
         name: `rest-${ctx.tenant.shortCode}`,
         projectUuid,
         serverUuid,
         environmentName: 'production',
-        composeYaml: ctx.tenantComposeYaml,
-        // Domain is routed via SERVICE_FQDN_APP_80 inside the compose YAML;
-        // Coolify v4's dockercompose endpoint rejects an explicit `domains`
-        // field ("This field is not allowed.")
+        imageName: imageName!,
+        imageTag,
+        portsExposes: '80',
+        domains: `https://${ctx.tenant.domain}`,
         description: `Tenant ${ctx.tenant.shortCode} — ${ctx.tenant.restaurantName}`,
-        instantDeploy: false,
+        instantDeploy: true,
       });
       ctx.coolifyUuid = result.uuid;
       ctx.containerName = ctx.containerName ?? `rest-${ctx.tenant.shortCode}`;
       ctx.log('info', `coolify app created uuid=${result.uuid} domains=${JSON.stringify(result.domains)}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      throw new PipelineError(ERROR_CODES.API_ERROR, `Coolify createDockerComposeApp failed: ${msg}`);
+      throw new PipelineError(ERROR_CODES.API_ERROR, `Coolify createDockerImageApp failed: ${msg}`);
     }
   },
   async rollback(ctx) {

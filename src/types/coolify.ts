@@ -76,6 +76,35 @@ export interface CoolifyDockerComposeAppResult {
   domains: string | string[] | null;
 }
 
+/**
+ * Input for the real Coolify v4 `POST /api/v1/applications/dockerimage`
+ * endpoint — used for V1 tenant deploys. We picked this over
+ * `/applications/dockercompose` because the compose endpoint in Coolify
+ * 4.0.0 returns a UUID but never persists the app; dockerimage persists
+ * correctly and reaches `running:*` on instant_deploy.
+ */
+export interface CoolifyDockerImageAppInput {
+  name: string;
+  projectUuid: string;
+  serverUuid: string;
+  environmentName?: string;
+  /** Docker registry image (e.g. `nginx`). */
+  imageName: string;
+  /** Image tag (e.g. `alpine`, `v1.5.0`). */
+  imageTag: string;
+  /** Container ports to expose (e.g. `"80"`). */
+  portsExposes: string;
+  /** FQDN like `https://demo.gewdai.com`. */
+  domains?: string;
+  description?: string;
+  instantDeploy?: boolean;
+}
+
+export interface CoolifyDockerImageAppResult {
+  uuid: string;
+  domains: string | string[] | null;
+}
+
 /** Mock mode hint sent via `X-Mock-Mode` header so WireMock can route. */
 export type CoolifyMockMode =
   | 'happy'
