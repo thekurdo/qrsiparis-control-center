@@ -1,0 +1,102 @@
+# Production Docker Compose stack for Coolify deployment.
+#
+# Coolify reads this file when the application's Build Pack is "Docker Compose".
+# It auto-injects magic env vars: SERVICE_FQDN_APP, SERVICE_URL_APP, etc.
+# (https://coolify.io/docs/knowledge-base/docker/compose#magic-environment-variables)
+#
+# Four services:
+#   - app:      Next.js panel on port 3001, fronted by Traefik with SSL
+#   - worker:   BullMQ deploy worker (no port, talks to postgres + redis)
+#   - postgres: Postgres 16 for the control-center DB
+#   - redis:    Redis 7 for BullMQ queue + SSE pub/sub
+#
+# The `app` and `worker` containers share the multi-stage Dockerfile under
+# docker/Dockerfile — different `target` per service.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Coolify magic: SERVICE_FQDN_APP_3001 resolves to https://panel.gewdai.com
+      # (or whatever domain the operator binds in the Coolify UI).
+      - NODE_ENV=production
+      - PORT=3001
+      - LOG_LEVEL=info
+      - TEST_MODE=
+      - SERVICE_FQDN_APP_3001
+      - DATABASE_URL=postgres://qrsiparis:${POSTGRES_PASSWORD}@postgres:5432/qrsiparis_cc
+      - REDIS_URL=redis://redis:6379
+      - AUTH_SECRET=${AUTH_SECRET}
+      - MASTER_KEY=${MASTER_KEY}
+      - COOLIFY_API_URL=${COOLIFY_API_URL}
+      - COOLIFY_API_TOKEN=${COOLIFY_API_TOKEN}
+      - DEFAULT_OPERATOR_USER=${DEFAULT_OPERATOR_USER:-admin}
+      - DEFAULT_OPERATOR_EMAIL=${DEFAULT_OPERATOR_EMAIL}
+      - DEFAULT_OPERATOR_PASSWORD=${DEFAULT_OPERATOR_PASSWORD}
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3001/api/internal/health || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - TEST_MODE=
+      - DATABASE_URL=postgres://qrsiparis:${POSTGRES_PASSWORD}@postgres:5432/qrsiparis_cc
+      - REDIS_URL=redis://redis:6379
+      - MASTER_KEY=${MASTER_KEY}
+      - COOLIFY_API_URL=${COOLIFY_API_URL}
+      - COOLIFY_API_TOKEN=${COOLIFY_API_TOKEN}
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=qrsiparis
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=qrsiparis_cc
+    volumes:
+      - cc-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U qrsiparis -d qrsiparis_cc']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    volumes:
+      - cc-redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  cc-postgres-data:
+  cc-redis-data:
