@@ -182,6 +182,15 @@ export class CoolifyClient {
     );
   }
 
+  /**
+   * List all applications. Used by the redeploy/app_update pipelines to
+   * recover a tenant's Coolify UUID from the app name (`rest-{shortCode}`)
+   * when the in-memory ctx doesn't have it yet.
+   */
+  listApps(): Promise<CoolifyApp[]> {
+    return this.request<CoolifyApp[]>('GET', '/api/v1/applications');
+  }
+
   stopApp(uuid: string): Promise<void> {
     return this.request<void>(
       'POST',

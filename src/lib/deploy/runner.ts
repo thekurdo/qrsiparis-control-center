@@ -34,7 +34,13 @@ import {
   runPipeline,
   type PipelineStep,
 } from './pipeline';
-import { initialDeploySteps } from './steps';
+import {
+  appUpdateSteps,
+  configUpdateSteps,
+  initialDeploySteps,
+  redeploySteps,
+  rollbackSteps,
+} from './steps';
 
 let _redis: IORedis | null = null;
 
@@ -118,12 +124,18 @@ export async function executeDeployment(deploymentId: string): Promise<void> {
       case 'initial':
         steps = initialDeploySteps;
         break;
-      // V1.5+ stubs — keep the queue contract usable without panicking.
-      case 'config_update':
-      case 'app_update':
       case 'redeploy':
+        steps = redeploySteps;
+        break;
+      case 'app_update':
+        steps = appUpdateSteps;
+        break;
+      case 'config_update':
+        steps = configUpdateSteps;
+        break;
       case 'rollback':
-        steps = [];
+        // Still a stub — V1.5 depends on deployment_history table.
+        steps = rollbackSteps;
         break;
       default:
         throw new PipelineError('INVALID_TYPE', 'Unknown deployment type');

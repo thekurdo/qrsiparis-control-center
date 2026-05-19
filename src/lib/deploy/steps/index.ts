@@ -19,6 +19,7 @@ export { step07HealthCheck } from './step07-health-check';
 export { step08SslCertificate } from './step08-ssl-certificate';
 export { step09DomainVerification } from './step09-domain-verification';
 export { step10PostDeploy } from './step10-post-deploy';
+export { stepRedeployTrigger } from './step-redeploy-trigger';
 
 import type { PipelineStep } from '../pipeline';
 import { step01Precheck } from './step01-precheck';
@@ -31,6 +32,7 @@ import { step07HealthCheck } from './step07-health-check';
 import { step08SslCertificate } from './step08-ssl-certificate';
 import { step09DomainVerification } from './step09-domain-verification';
 import { step10PostDeploy } from './step10-post-deploy';
+import { stepRedeployTrigger } from './step-redeploy-trigger';
 
 export const initialDeploySteps: PipelineStep[] = [
   step01Precheck,
@@ -44,3 +46,40 @@ export const initialDeploySteps: PipelineStep[] = [
   step09DomainVerification,
   step10PostDeploy,
 ];
+
+/** redeploy = same image + same config, just restart container. */
+export const redeploySteps: PipelineStep[] = [
+  step01Precheck,
+  stepRedeployTrigger,
+  step06ContainerStart,
+  step07HealthCheck,
+];
+
+/** app_update = new image version. Pull, redeploy, healthcheck. */
+export const appUpdateSteps: PipelineStep[] = [
+  step01Precheck,
+  step04DockerImagePull,
+  stepRedeployTrigger,
+  step06ContainerStart,
+  step07HealthCheck,
+];
+
+/** config_update = regenerate + inject config, then restart. */
+export const configUpdateSteps: PipelineStep[] = [
+  step01Precheck,
+  step02ConfigGenerate,
+  step05ConfigInject,
+  stepRedeployTrigger,
+  step06ContainerStart,
+  step07HealthCheck,
+];
+
+/**
+ * rollback = revert tenant config + redeploy.
+ *
+ * V1 stub: still no-op — rollback to a previous app version requires
+ * the V1.5 `deployment_history` table to know what version to roll back
+ * to. We don't have that yet, so leave this as an empty list and let
+ * the runner's no-op path mark it success-but-warned.
+ */
+export const rollbackSteps: PipelineStep[] = [];
