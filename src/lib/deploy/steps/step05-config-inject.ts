@@ -173,13 +173,19 @@ export const step05ConfigInject: PipelineStep = {
       ctx.log('info', `CONFIG_INJECT: wrote ${configJson.length} bytes to ${tmpPath} on host`);
 
       // 2. Find the actual container name (Coolify names it
-      //    `{coolifyUuid}-{timestamp}`). If `ctx.containerName` is
-      //    set and looks like a Coolify name we still verify against
-      //    docker ps — source of truth.
-      const containerName = await findContainerName(ssh, ctx.coolifyUuid);
+      //    `{coolifyUuid}-{timestamp}`). Poll for up to 90s: step03's
+      //    instant_deploy queues an async build/pull, so the container
+      //    can take ~30-60s to appear in `docker ps`.
+      let containerName: string | null = null;
+      const containerWaitDeadlineMs = Date.now() + 90_000;
+      while (Date.now() < containerWaitDeadlineMs) {
+        containerName = await findContainerName(ssh, ctx.coolifyUuid);
+        if (containerName) break;
+        await new Promise((r) => setTimeout(r, 5_000));
+      }
       if (!containerName) {
         throw new Error(
-          `no running container matching coolifyUuid=${ctx.coolifyUuid} (step06 should have started it)`,
+          `no running container matching coolifyUuid=${ctx.coolifyUuid} after 90s wait`,
         );
       }
       ctx.log('info', `CONFIG_INJECT: target container = ${containerName}`);
@@ -220,6 +226,18 @@ export const step05ConfigInject: PipelineStep = {
           `CONFIG_INJECT: tmp cleanup failed (non-fatal): ${rmRes.stderr.slice(0, 200)}`,
         );
       }
+
+      // 5. Restart the container so the app re-reads the freshly-injected
+      //    config on next boot. The app loads config eagerly at startup
+      //    (`getConfig()` is called from server-only modules) so without a
+      //    restart the new tenant's first requests would 500 with
+      //    CONFIG_NOT_FOUND from the cached null-state.
+      await execOrThrow(
+        ssh,
+        `docker restart ${containerName}`,
+        'docker restart (post-inject)',
+      );
+      ctx.log('info', `CONFIG_INJECT: restarted ${containerName} so app reloads config`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // Re-wrap into a PipelineError so the runner stamps a clean code.
