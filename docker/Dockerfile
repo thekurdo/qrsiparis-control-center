@@ -115,6 +115,12 @@ COPY --from=builder --chown=worker:worker /app/package.json ./package.json
 COPY --from=builder --chown=worker:worker /app/tsconfig.json ./tsconfig.json
 COPY --from=builder --chown=worker:worker /app/src ./src
 COPY --from=builder --chown=worker:worker /app/scripts ./scripts
+# Drizzle migrations must be present so `pnpm db:migrate` (run as the
+# worker container's init step on first deploy) can find the SQL files.
+# Without this the migrate command exits non-zero and the SQL has to be
+# applied manually via psql — which is exactly what happened on the
+# first production deploy.
+COPY --from=builder --chown=worker:worker /app/drizzle ./drizzle
 
 USER worker
 
