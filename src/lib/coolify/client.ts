@@ -40,7 +40,7 @@ export class CoolifyClient {
   }
 
   private async request<T>(
-    method: 'GET' | 'POST' | 'DELETE',
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
     path: string,
     body?: unknown,
   ): Promise<T> {
@@ -209,6 +209,46 @@ export class CoolifyClient {
     return this.request<void>(
       'DELETE',
       `/api/v1/applications/${encodeURIComponent(uuid)}`,
+    );
+  }
+
+  /**
+   * Attach a persistent storage volume to a Coolify application — Coolify v4
+   * `POST /api/v1/applications/{uuid}/storages`. Used by the deploy pipeline
+   * to bake a `/data` volume into every tenant app right after create, so
+   * the customer-product's `restaurant.config.json` survives container restarts.
+   *
+   * Coolify 4.0.0 only accepts `type=persistent` or `type=file` for directory
+   * mounts — other values are rejected at validation time (verified empirically
+   * against panel.gewdai.com).
+   */
+  addPersistentStorage(
+    applicationUuid: string,
+    body: { name: string; mount_path: string },
+  ): Promise<{ uuid: string; name: string }> {
+    return this.request<{ uuid: string; name: string }>(
+      'POST',
+      `/api/v1/applications/${encodeURIComponent(applicationUuid)}/storages`,
+      { name: body.name, type: 'persistent', mount_path: body.mount_path },
+    );
+  }
+
+  /**
+   * Patch an application's configuration in place — Coolify v4
+   * `PATCH /api/v1/applications/{uuid}`. The pipeline uses this immediately
+   * after `createDockerImageApp` to override the healthcheck Coolify infers
+   * from the baked image HEALTHCHECK (the image declares port 3000 but
+   * Coolify rebinds the container to PORT=80, so the inferred check fails).
+   *
+   * Body is forwarded verbatim — Coolify accepts a partial app body and only
+   * merges the fields supplied. Callers typically pass `health_check_*`
+   * keys; full schema lives in the Coolify v4 OpenAPI doc.
+   */
+  updateAppConfig(uuid: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.request<unknown>(
+      'PATCH',
+      `/api/v1/applications/${encodeURIComponent(uuid)}`,
+      body,
     );
   }
 
