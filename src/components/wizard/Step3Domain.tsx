@@ -3,24 +3,34 @@
  * the four ops URLs the tenant will use post-launch (Phase H5).
  *
  * Two paths:
- *   1. Müşterinin kendi domain'i (default) — operator types e.g.
- *      `siparis.acmepide.com`. We validate as a basic hostname pattern.
- *   2. Bizden alt-domain — auto-fills `<shortCode>.qrsiparis.app`. The
- *      shortCode is read-only here; if the operator wants to change it
- *      they go back to Step 1.
+ *   1. Bizden Alt-Domain Al (DEFAULT) — auto-fills `<shortCode>.<baseDomain>`
+ *      on first pick. Field stays editable so the operator can tweak it
+ *      (e.g. for staging hostnames) without going back to Step 1.
+ *   2. Müşterinin kendi domain'i — operator types e.g.
+ *      `siparis.acmepide.com`. Validated as a basic hostname pattern.
  *
- * Preview block is informational: shows `/yonetim`, `/kasa`, `/mutfak`,
- * `/garson` so the operator can sanity-check the domain choice before
- * moving on.
+ * Base domain comes from `NEXT_PUBLIC_BASE_DOMAIN` (set in CC's Coolify env,
+ * `gewdai.com` in prod). We default to `gewdai.com` so local dev "just works".
+ *
+ * Editability rule:
+ *   `domainManuallyEdited` flag — flipped true the moment the operator types
+ *   in the field. Mode toggles only auto-overwrite the value when it still
+ *   matches a previous auto-fill pattern, never after manual edits.
+ *
+ * Preview block: builds live URLs from `state.domain` and (when available)
+ *   the locale picked in Step 5. Routes are `/<locale>/<role>` to mirror
+ *   the customer-app's `[locale]` segment layout.
  */
 'use client';
 
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 
 import type { Step3Data } from './TenantWizardClient';
 
-const SUBDOMAIN_BASE = 'qrsiparis.app';
+// Base domain for the bizden-alt-domain mode. Override per environment via
+// NEXT_PUBLIC_BASE_DOMAIN; default keeps local dev sane.
+const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN ?? 'gewdai.com';
 
 // Hostname validation — single-label minimum, accepts dotted labels with
 // hyphens, max 253 chars. Doesn't enforce TLD presence (operators sometimes
@@ -42,41 +52,105 @@ const schema = z.object({
 });
 
 const PREVIEW_PATHS: Array<{ path: string; label: string }> = [
-  { path: '/yonetim', label: 'Yönetim' },
-  { path: '/kasa', label: 'Kasa' },
-  { path: '/mutfak', label: 'Mutfak' },
-  { path: '/garson', label: 'Garson' },
+  { path: 'yonetim', label: 'Yönetim' },
+  { path: 'kasa', label: 'Kasa' },
+  { path: 'mutfak', label: 'Mutfak' },
+  { path: 'garson', label: 'Garson' },
 ];
 
 export function Step3Domain({
   data,
   shortCode,
+  locale,
   onNext,
   onBack,
 }: {
   data?: Step3Data;
   shortCode: string | undefined;
+  locale?: string;
   onNext: (d: Step3Data) => void;
   onBack: () => void;
 }) {
-  const subdomain = shortCode ? `${shortCode}.${SUBDOMAIN_BASE}` : '';
+  const subdomain = shortCode ? `${shortCode}.${BASE_DOMAIN}` : '';
 
-  const [form, setForm] = useState<Step3Data>(
-    data ?? {
-      domain: '',
-      useSubdomain: false,
-    },
-  );
+  // Default to "Bizden alt-domain" mode (most first customers don't own a
+  // domain). If we already have a shortCode and no prior data, pre-fill.
+  const initialUseSubdomain = data?.useSubdomain ?? true;
+  const initialDomain =
+    data?.domain ?? (initialUseSubdomain && subdomain ? subdomain : '');
+
+  const [form, setForm] = useState<Step3Data>({
+    domain: initialDomain,
+    useSubdomain: initialUseSubdomain,
+  });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // When subdomain mode is on, sync the displayed domain to the computed
-  // value so the preview block stays correct. Switching back to "own" mode
-  // clears the field unless the operator already has an explicit value.
+  // Track whether the operator has manually typed into the domain field.
+  // Once true, mode toggles will NOT clobber the value unless it still
+  // matches a known auto-fill pattern. We also remember the last value the
+  // wizard itself auto-filled so we can safely overwrite *that exact string*
+  // when the operator flips modes back and forth without typing.
+  const manuallyEditedRef = useRef<boolean>(
+    !!data?.domain && data.domain !== subdomain,
+  );
+  const lastAutoFillRef = useRef<string>(
+    initialUseSubdomain && subdomain ? subdomain : '',
+  );
+
+  // Keep the auto-fill fresh when shortCode arrives late (e.g. operator hit
+  // "Back" to Step 1, changed shortCode, then returned). Only overwrites if
+  // the field is still showing the previous auto-fill.
   useEffect(() => {
-    if (form.useSubdomain && subdomain && form.domain !== subdomain) {
+    if (!form.useSubdomain || !subdomain) return;
+    if (manuallyEditedRef.current) return;
+    if (form.domain === subdomain) return;
+    if (form.domain === '' || form.domain === lastAutoFillRef.current) {
+      lastAutoFillRef.current = subdomain;
       setForm((prev) => ({ ...prev, domain: subdomain }));
     }
   }, [form.useSubdomain, form.domain, subdomain]);
+
+  function pickOwnDomain() {
+    // If the current value is an auto-fill (untouched), clear it. If the
+    // operator typed something, leave it alone — they may want to keep it.
+    const wasAutoFill =
+      !manuallyEditedRef.current && form.domain === lastAutoFillRef.current;
+    setForm((prev) => ({
+      ...prev,
+      useSubdomain: false,
+      domain: wasAutoFill ? '' : prev.domain,
+    }));
+    if (wasAutoFill) {
+      lastAutoFillRef.current = '';
+    }
+  }
+
+  function pickSubdomain() {
+    if (!subdomain) return;
+    // If the field is empty or holding the previous auto-fill, replace with
+    // the fresh subdomain. Otherwise (operator typed a custom value) leave
+    // it alone — they can clear the field manually if they want the default.
+    const shouldAutoFill =
+      !manuallyEditedRef.current &&
+      (form.domain === '' || form.domain === lastAutoFillRef.current);
+    setForm((prev) => ({
+      ...prev,
+      useSubdomain: true,
+      domain: shouldAutoFill ? subdomain : prev.domain,
+    }));
+    if (shouldAutoFill) {
+      lastAutoFillRef.current = subdomain;
+    }
+  }
+
+  function handleDomainChange(value: string) {
+    const trimmed = value.trim();
+    // Any keystroke outside an auto-fill string counts as a manual edit.
+    if (trimmed !== lastAutoFillRef.current) {
+      manuallyEditedRef.current = true;
+    }
+    setForm((prev) => ({ ...prev, domain: trimmed }));
+  }
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -96,9 +170,17 @@ export function Step3Domain({
     onNext(result.data);
   }
 
-  // The preview block uses whatever domain is currently in the form, falling
-  // back to a placeholder so the layout doesn't jump while the operator types.
-  const previewHost = form.domain || 'restoran.com';
+  // Preview block uses whatever domain is currently in the form, falling
+  // back to a placeholder so the layout doesn't jump while the operator
+  // types. Locale defaults to 'tr' if Step 5 hasn't been reached yet.
+  const previewHost = form.domain || `${shortCode ?? 'restoran'}.${BASE_DOMAIN}`;
+  const previewLocale = locale && locale.length > 0 ? locale : 'tr';
+
+  // Placeholder reflects the current mode so the operator sees the format
+  // they're aiming for.
+  const placeholder = form.useSubdomain
+    ? (subdomain || `slug.${BASE_DOMAIN}`)
+    : `siparis.${BASE_DOMAIN}`;
 
   return (
     <form
@@ -117,25 +199,17 @@ export function Step3Domain({
       {/* Mode picker */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <ModeOption
-          active={!form.useSubdomain}
-          onClick={() =>
-            setForm((prev) => ({ ...prev, useSubdomain: false, domain: '' }))
-          }
-          title="Müşterinin Kendi Domain'i"
-          desc="Restoranın sahibi olduğu özel bir domain (örn. siparis.acmepide.com)."
-        />
-        <ModeOption
           active={form.useSubdomain}
-          onClick={() =>
-            setForm((prev) => ({
-              ...prev,
-              useSubdomain: true,
-              domain: subdomain,
-            }))
-          }
-          title={`Bizden Alt-Domain Al (${SUBDOMAIN_BASE})`}
+          onClick={pickSubdomain}
+          title={`Bizden Alt-Domain Al (${BASE_DOMAIN})`}
           desc="Restoran kendi domain'ine sahip değilse hızlı kurulum için bizden bir alt-domain veriyoruz."
           disabled={!shortCode}
+        />
+        <ModeOption
+          active={!form.useSubdomain}
+          onClick={pickOwnDomain}
+          title="Müşterinin Kendi Domain'i"
+          desc="Restoranın sahibi olduğu özel bir domain (örn. siparis.acmepide.com)."
         />
       </div>
       {!shortCode && (
@@ -144,7 +218,9 @@ export function Step3Domain({
         </p>
       )}
 
-      {/* Domain field */}
+      {/* Domain field — always editable, regardless of mode. The
+          subdomain mode merely auto-fills on first pick; the operator can
+          override (e.g. for staging or vanity subdomains). */}
       <div>
         <label htmlFor="domain" className="block text-sm text-slate-300 mb-1">
           Domain <span className="text-red-400">*</span>
@@ -153,22 +229,29 @@ export function Step3Domain({
           id="domain"
           type="text"
           value={form.domain}
-          onChange={(e) =>
-            setForm((prev) => ({ ...prev, domain: e.target.value.trim() }))
-          }
-          readOnly={form.useSubdomain}
-          placeholder={form.useSubdomain ? subdomain : 'siparis.acmepide.com'}
+          onChange={(e) => handleDomainChange(e.target.value)}
+          placeholder={placeholder}
           className={`w-full bg-slate-900 text-slate-100 rounded p-2 text-sm font-mono border focus:outline-none ${
             errors['domain']
               ? 'border-red-500'
               : 'border-slate-700 focus:border-blue-500'
-          } ${form.useSubdomain ? 'opacity-70 cursor-not-allowed' : ''}`}
+          }`}
         />
-        {form.useSubdomain && (
+        {form.useSubdomain && subdomain && (
           <p className="text-xs text-slate-500 mt-1">
-            Otomatik olarak{' '}
-            <span className="font-mono text-slate-300">{subdomain}</span> olarak
-            atandı.
+            Önerilen:{' '}
+            <button
+              type="button"
+              onClick={() => {
+                manuallyEditedRef.current = false;
+                lastAutoFillRef.current = subdomain;
+                setForm((prev) => ({ ...prev, domain: subdomain }));
+              }}
+              className="font-mono text-slate-300 hover:text-blue-400 underline-offset-2 hover:underline"
+            >
+              {subdomain}
+            </button>{' '}
+            — gerekirse düzenleyebilirsiniz.
           </p>
         )}
         {errors['domain'] && (
@@ -182,7 +265,10 @@ export function Step3Domain({
         )}
       </div>
 
-      {/* URL preview */}
+      {/* URL preview — live binding to form.domain + the locale picked in
+          Step 5 (defaults to 'tr' if not yet reached). The path prefix
+          includes the `[locale]` segment so it matches the real
+          customer-app routes. */}
       <div className="bg-slate-900/60 border border-slate-700 rounded p-4">
         <h3 className="text-sm font-semibold text-slate-200 mb-2">
           Önizleme
@@ -193,7 +279,9 @@ export function Step3Domain({
               <span className="text-slate-400 w-16">{label}</span>
               <span className="font-mono text-slate-200">
                 https://{previewHost}
-                <span className="text-blue-400">{path}</span>
+                <span className="text-blue-400">
+                  /{previewLocale}/{path}
+                </span>
               </span>
             </li>
           ))}

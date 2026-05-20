@@ -32,6 +32,8 @@ import { auditLog, tenants } from '@/db/schema';
 import { errorResponse, getClientIp, getUserAgent, successResponse } from '@/lib/api/response';
 import { requireOperatorAuth } from '@/lib/auth/middleware';
 import { recordAudit } from '@/lib/cc/audit';
+import { buildConfigSnapshot } from '@/lib/cc/build-tenant-config';
+import type { WizardState } from '@/components/wizard/TenantWizardClient';
 
 const wizardSchema = z.object({
   step1: z
@@ -75,6 +77,12 @@ const wizardSchema = z.object({
     serverId: z.string().uuid(),
   }),
   step7: z.object({}).passthrough().optional(),
+  // configSnapshot: the canonical RestaurantConfig the wizard builds
+  // client-side via `buildConfigSnapshot()`. We persist this verbatim to
+  // `tenants.config_snapshot` so step05 of the deploy pipeline can render
+  // `restaurant.config.json` without any further transformation. Optional
+  // for back-compat: if missing we rebuild it server-side.
+  configSnapshot: z.record(z.string(), z.unknown()).optional(),
 });
 
 type WizardPayload = z.infer<typeof wizardSchema>;
@@ -157,6 +165,24 @@ export async function POST(req: NextRequest) {
 
   const data: WizardPayload = parsed.data;
 
+  // Resolve the canonical config snapshot:
+  //   1. Prefer the client-built `configSnapshot` (wizard always sends one).
+  //   2. Fall back to rebuilding server-side from step1..5 — defends against
+  //      old client bundles, CLI/curl callers, and tests.
+  // Either way, the value we persist is a `RestaurantConfig` (top-level keys
+  // `restaurant, branding, locale, modules, ...`), NEVER the raw step buckets.
+  let canonicalSnapshot: Record<string, unknown>;
+  if (data.configSnapshot && typeof data.configSnapshot === 'object') {
+    canonicalSnapshot = data.configSnapshot;
+  } else {
+    try {
+      canonicalSnapshot = buildConfigSnapshot(data as unknown as WizardState) as unknown as Record<string, unknown>;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'config build failed';
+      return errorResponse('VALIDATION_ERROR', `Konfigürasyon oluşturulamadı: ${msg}`);
+    }
+  }
+
   const contractStart = new Date(`${data.step2.contractStartDate}T00:00:00Z`);
   const contractEnd = computeContractEnd(
     data.step2.contractStartDate,
@@ -190,7 +216,7 @@ export async function POST(req: NextRequest) {
           commissionRatePercent: data.step2.commissionRatePercent ?? 0,
           domain: data.step3.domain,
           serverIdRef: data.step6.serverId,
-          configSnapshot: data as never,
+          configSnapshot: canonicalSnapshot as never,
           configVersion: 1,
           status: 'onboarding',
           containerStatus: 'not_deployed',
