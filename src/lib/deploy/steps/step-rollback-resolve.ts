@@ -1,33 +1,28 @@
 /**
  * ROLLBACK_RESOLVE — first step of the `rollback` deployment pipeline.
  *
- * Looks at the tenant's `deployments` history (the existing table — no
- * separate `deployment_history` needed for V1.5) and picks the most
- * recent `success` row whose `app_version` differs from the
- * currently-running one. Stamps it onto `ctx.deployment.appVersion`
- * (in memory only, not persisted yet — the rollback deploy row will
- * be updated to reflect the resolved target at this step's exit) and
- * primes `ctx.coolifyUuid` from the tenant's app name so the downstream
- * step03 PATCH + step06 poll know where to act.
+ * Prefers a `deployment_history` snapshot (full image + config restore).
+ * Falls back to the legacy "scan deployments table" strategy when no
+ * history rows exist yet (e.g. tenants created before the history table
+ * landed). The legacy path restores image only.
  *
- * V1.5 limitation: we restore the previous IMAGE only. The tenant's
- * `configSnapshot` JSON is **not** versioned in V1 — restoring it
- * requires a follow-up migration adding a `tenants.previous_config_snapshot`
- * column (or a proper `deployment_history` table). For V1.5, operators
- * who need to roll back a config change should use the `config_update`
- * pipeline with the old JSON manually pasted in. Once the history
- * table lands this step will also restore the JSON.
+ * Updates `ctx.deployment.appVersion` (and persists it onto the
+ * rollback deployment row for UI display). Optionally writes a fresh
+ * `tenants.config_snapshot` if the history row carried one. Marks the
+ * picked history row as `status='rolled_back'` so a chain of rollbacks
+ * doesn't keep landing on the same target.
  *
- * If no eligible prior deployment exists, we throw a typed error so the
- * runner records a `failed` status with code `NO_ROLLBACK_TARGET`.
- *
- * Idempotency: pure read + ctx mutation — re-running is safe.
+ * Throws `NO_ROLLBACK_TARGET` if nothing eligible found anywhere.
  */
 
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { and, desc, eq, isNull, ne } from 'drizzle-orm';
 
 import { db } from '@/db/client';
-import { deployments } from '@/db/schema';
+import {
+  deployments,
+  deploymentHistory,
+  tenants,
+} from '@/db/schema';
 
 import { ERROR_CODES, PipelineError, type PipelineStep } from '../pipeline';
 
@@ -35,10 +30,72 @@ export const stepRollbackResolve: PipelineStep = {
   name: 'ROLLBACK_RESOLVE',
   async forward(ctx) {
     const currentVersion = ctx.deployment.appVersion ?? '';
-    // Most recent successful deployment for this tenant that is NOT the
-    // current rollback row itself AND NOT the same app_version as what's
-    // running (rolling back to the same version is a no-op for the
-    // image; we want the *previous* one).
+
+    // ---- Path A: prefer deployment_history (full restore) -----------------
+    const history = await db
+      .select({
+        id: deploymentHistory.id,
+        appVersion: deploymentHistory.appVersion,
+        configSnapshot: deploymentHistory.configSnapshot,
+        configVersion: deploymentHistory.configVersion,
+        createdAt: deploymentHistory.createdAt,
+      })
+      .from(deploymentHistory)
+      .where(
+        and(
+          eq(deploymentHistory.tenantId, ctx.tenant.id),
+          eq(deploymentHistory.status, 'success'),
+          isNull(deploymentHistory.archivedAt),
+        ),
+      )
+      .orderBy(desc(deploymentHistory.createdAt))
+      .limit(10);
+
+    const histTarget = history.find(
+      (h) => h.appVersion !== currentVersion,
+    );
+    if (histTarget) {
+      ctx.deployment.appVersion = histTarget.appVersion;
+      ctx.log(
+        'info',
+        `rollback target (history): app_version=${histTarget.appVersion} configVersion=${histTarget.configVersion} from history=${histTarget.id}`,
+      );
+
+      // Persist resolved image onto rollback deployment row.
+      await db
+        .update(deployments)
+        .set({
+          appVersion: histTarget.appVersion,
+          configVersion: histTarget.configVersion,
+        })
+        .where(eq(deployments.id, ctx.deployment.id));
+
+      // Restore the captured config snapshot onto the tenant. Subsequent
+      // step05 (CONFIG_INJECT) will pick this up via ctx.tenant.configSnapshot
+      // — which we also rewrite here so the in-memory ctx matches the DB.
+      await db
+        .update(tenants)
+        .set({
+          configSnapshot: histTarget.configSnapshot,
+          configVersion: histTarget.configVersion,
+          updatedAt: new Date(),
+        })
+        .where(eq(tenants.id, ctx.tenant.id));
+      ctx.tenant.configSnapshot = histTarget.configSnapshot;
+      ctx.tenant.configVersion = histTarget.configVersion;
+
+      // Mark history row as rolled-back so a follow-up rollback picks the
+      // NEXT one back instead of bouncing between two states.
+      await db
+        .update(deploymentHistory)
+        .set({ status: 'rolled_back', archivedAt: new Date() })
+        .where(eq(deploymentHistory.id, histTarget.id));
+      return;
+    }
+
+    // ---- Path B: legacy fallback (image only) -----------------------------
+    // Older tenants (pre-deployment_history) have no snapshots — fall back
+    // to scanning the deployments table.
     const rows = await db
       .select({
         id: deployments.id,
@@ -70,11 +127,9 @@ export const stepRollbackResolve: PipelineStep = {
     ctx.deployment.appVersion = target.appVersion;
     ctx.log(
       'info',
-      `rollback target: app_version=${target.appVersion} from deployment=${target.id} (createdAt=${target.createdAt.toISOString()})`,
+      `rollback target (legacy/image-only): app_version=${target.appVersion} from deployment=${target.id}`,
     );
 
-    // Persist the resolved version onto the rollback deployment row so
-    // the operator UI shows the right "rolling back to X" label.
     await db
       .update(deployments)
       .set({ appVersion: target.appVersion })

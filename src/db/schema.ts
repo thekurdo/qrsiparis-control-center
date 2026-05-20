@@ -252,7 +252,14 @@ export const deployments = pgTable(
       .notNull()
       .references(() => servers.id, { onDelete: 'restrict' }),
     deploymentType: text('deployment_type', {
-      enum: ['initial', 'config_update', 'app_update', 'redeploy', 'rollback'],
+      enum: [
+        'initial',
+        'config_update',
+        'app_update',
+        'redeploy',
+        'rollback',
+        'delete',
+      ],
     }).notNull(),
     status: text('status', {
       enum: ['pending', 'in_progress', 'success', 'failed', 'rolled_back'],
@@ -284,6 +291,45 @@ export const deployments = pgTable(
     tenantStatusCreatedIdx: index('idx_deployments_tenant_status_created').on(
       t.tenantId,
       t.status,
+      t.createdAt,
+    ),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// 4b. deployment_history — point-in-time snapshots after every successful
+// pipeline. Powers the rollback step's config restoration (image-only
+// rollback was V1.5; full restore lands here in V2). Append-only; never
+// updated. The `archived_at` column marks rows we've already rolled
+// back to (so a chain of rollbacks doesn't keep picking the same row).
+// ---------------------------------------------------------------------------
+export const deploymentHistory = pgTable(
+  'deployment_history',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    deploymentId: uuid('deployment_id').references(() => deployments.id, {
+      onDelete: 'set null',
+    }),
+    appVersion: text('app_version').notNull(),
+    configSnapshot: jsonb('config_snapshot').notNull(),
+    configVersion: integer('config_version').notNull(),
+    // 'success' for normal capture rows; 'rolled_back' marks a target row
+    // the operator already rolled BACK to (so we skip it next time).
+    status: text('status', { enum: ['success', 'rolled_back'] })
+      .notNull()
+      .default('success'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+  },
+  (t) => ({
+    tenantIdx: index('idx_deployment_history_tenant_id').on(t.tenantId),
+    tenantCreatedIdx: index('idx_deployment_history_tenant_created').on(
+      t.tenantId,
       t.createdAt,
     ),
   }),

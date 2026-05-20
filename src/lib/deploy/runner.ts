@@ -37,6 +37,7 @@ import {
 import {
   appUpdateSteps,
   configUpdateSteps,
+  deleteSteps,
   initialDeploySteps,
   redeploySteps,
   rollbackSteps,
@@ -134,8 +135,10 @@ export async function executeDeployment(deploymentId: string): Promise<void> {
         steps = configUpdateSteps;
         break;
       case 'rollback':
-        // Still a stub — V1.5 depends on deployment_history table.
         steps = rollbackSteps;
+        break;
+      case 'delete':
+        steps = deleteSteps;
         break;
       default:
         throw new PipelineError('INVALID_TYPE', 'Unknown deployment type');

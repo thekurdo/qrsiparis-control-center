@@ -3,8 +3,8 @@
  *
  * `initialDeploySteps` is the canonical 10-step ordered array consumed by
  * `executeDeployment()` for `deployment_type = 'initial'`. Other deploy
- * types (config_update / app_update / redeploy / rollback) build their
- * own ordered subsets in V1.5 — see runner.ts for the dispatch switch.
+ * types (config_update / app_update / redeploy / rollback / delete) build
+ * their own ordered subsets — see runner.ts for the dispatch switch.
  *
  * Order matches Doc 18 §4. DO NOT reorder without updating the doc.
  */
@@ -22,6 +22,10 @@ export { step10PostDeploy } from './step10-post-deploy';
 export { stepRedeployTrigger } from './step-redeploy-trigger';
 export { stepRollbackResolve } from './step-rollback-resolve';
 export { stepRollbackCoolifyPatch } from './step-rollback-coolify-patch';
+export { stepHistorySnapshot } from './step-history-snapshot';
+export { stepDeleteFinalBackup } from './step-delete-final-backup';
+export { stepDeleteCoolifyApp } from './step-delete-coolify-app';
+export { stepDeleteTenantMark } from './step-delete-tenant-mark';
 
 import type { PipelineStep } from '../pipeline';
 import { step01Precheck } from './step01-precheck';
@@ -37,6 +41,10 @@ import { step10PostDeploy } from './step10-post-deploy';
 import { stepRedeployTrigger } from './step-redeploy-trigger';
 import { stepRollbackResolve } from './step-rollback-resolve';
 import { stepRollbackCoolifyPatch } from './step-rollback-coolify-patch';
+import { stepHistorySnapshot } from './step-history-snapshot';
+import { stepDeleteFinalBackup } from './step-delete-final-backup';
+import { stepDeleteCoolifyApp } from './step-delete-coolify-app';
+import { stepDeleteTenantMark } from './step-delete-tenant-mark';
 
 export const initialDeploySteps: PipelineStep[] = [
   step01Precheck,
@@ -49,6 +57,7 @@ export const initialDeploySteps: PipelineStep[] = [
   step08SslCertificate,
   step09DomainVerification,
   step10PostDeploy,
+  stepHistorySnapshot,
 ];
 
 /** redeploy = same image + same config, just restart container. */
@@ -57,6 +66,7 @@ export const redeploySteps: PipelineStep[] = [
   stepRedeployTrigger,
   step06ContainerStart,
   step07HealthCheck,
+  stepHistorySnapshot,
 ];
 
 /** app_update = new image version. Pull, redeploy, healthcheck. */
@@ -66,6 +76,7 @@ export const appUpdateSteps: PipelineStep[] = [
   stepRedeployTrigger,
   step06ContainerStart,
   step07HealthCheck,
+  stepHistorySnapshot,
 ];
 
 /** config_update = regenerate + inject config, then restart. */
@@ -76,20 +87,33 @@ export const configUpdateSteps: PipelineStep[] = [
   stepRedeployTrigger,
   step06ContainerStart,
   step07HealthCheck,
+  stepHistorySnapshot,
 ];
 
 /**
- * rollback = restore the previous successful deployment's image tag,
- * then redeploy. V1.5 limitation: only the IMAGE is rolled back; the
- * tenant's `configSnapshot` is not (a `previous_config_snapshot`
- * column / `deployment_history` table is V2 — operators rolling back
- * config should use `config_update` with the old JSON manually).
+ * rollback = restore the previous successful deployment's image + config
+ * from `deployment_history`. Falls back to image-only restore when no
+ * history row exists for the tenant (legacy tenants pre-history table).
  */
 export const rollbackSteps: PipelineStep[] = [
   step01Precheck,
   stepRollbackResolve,
   stepRollbackCoolifyPatch,
+  step05ConfigInject,
   stepRedeployTrigger,
   step06ContainerStart,
   step07HealthCheck,
+  stepHistorySnapshot,
+];
+
+/**
+ * delete = tear down tenant entirely. Last-minute backup → Coolify app
+ * DELETE (drops container + volume + Traefik routes) → mark tenant
+ * status='cancelled' (row preserved for audit + history).
+ */
+export const deleteSteps: PipelineStep[] = [
+  step01Precheck,
+  stepDeleteFinalBackup,
+  stepDeleteCoolifyApp,
+  stepDeleteTenantMark,
 ];
