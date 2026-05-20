@@ -13,8 +13,17 @@
  * Deploy flow (Step 7 → submit):
  *   1. POST /api/internal/tenants with the full wizard state → tenantId
  *   2. POST /api/internal/deployments with that tenantId + 'initial' type
- *      → deploymentId
- *   3. router.push(`/deployments/{deploymentId}`)
+ *      + explicit appVersion (latest qrsiparis-app tag) → deploymentId
+ *   3. router.push(`/deployments/{deploymentId}`) so the operator can
+ *      watch the pipeline live via SSE.
+ *
+ * Why we pass `appVersion` explicitly: the deployments POST otherwise
+ * falls back to `process.env.APP_VERSION` (which is the CC's own version,
+ * not the tenant-app's). With that default the worker would try to pull a
+ * tag like `dev` and step04 would error. Bake the current customer-app
+ * tag in here so the wizard always ships a deployable image reference;
+ * the operator can still override this from the API in V1.5 once we
+ * expose an "advanced" pane in Step 7.
  *
  * On any failure the wizard stays on Step 7 with an error banner and the
  * localStorage state intact so the operator can retry without re-typing.
@@ -96,6 +105,15 @@ export interface WizardState {
 
 const STORAGE_KEY = 'wizard-new-tenant';
 const STORAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Customer-app image tag the wizard ships with every new tenant. Bumped
+ * each time a new qrsiparis-app release lands on ghcr.io and is verified
+ * end-to-end against an existing tenant. Format must match step03's
+ * `resolveImageRef` parser (short `qrsiparis-app:vX.Y.Z` form gets
+ * rewritten to `ghcr.io/thekurdo/qrsiparis-app:vX.Y.Z`).
+ */
+const DEFAULT_APP_VERSION = 'qrsiparis-app:v0.1.7';
 
 interface StorageEnvelope {
   savedAt: number;
@@ -218,6 +236,7 @@ export function TenantWizardClient({
         body: JSON.stringify({
           tenantId,
           deploymentType: 'initial',
+          appVersion: DEFAULT_APP_VERSION,
           triggerReason: 'Wizard ilk kurulum',
         }),
       });

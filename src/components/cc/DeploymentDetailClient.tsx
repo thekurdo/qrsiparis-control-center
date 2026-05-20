@@ -29,7 +29,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   DeployStatusPill,
@@ -366,6 +366,18 @@ export function DeploymentDetailClient({
         ) : null}
       </header>
 
+      {/* Active deploy progress indicator — spinner + live elapsed counter.
+          Renders only while the deployment is pending/in_progress. We pick
+          `startedAt ?? createdAt` as the anchor so the counter is meaningful
+          even if the BullMQ worker hasn't yet flipped status to in_progress
+          (the row exists from the moment the POST commits). */}
+      {isActive ? (
+        <ActiveDeploymentBanner
+          anchor={initial.startedAt ?? initial.createdAt}
+          status={initial.status}
+        />
+      ) : null}
+
       {/* Action buttons */}
       <div className="flex flex-wrap gap-2">
         {isActive ? (
@@ -541,6 +553,87 @@ function StepIcon({ state, index }: { state: StepState; index: number }) {
       {index}
     </span>
   );
+}
+
+/**
+ * ActiveDeploymentBanner — pending/in_progress indicator with elapsed
+ * counter (Phase H8 follow-up).
+ *
+ * Renders a single horizontal strip with:
+ *   - a CSS-animated spinner (no external assets — pure border trick)
+ *   - the deployment's current status pill (verbose, e.g. "Sırada" vs
+ *     "Devam ediyor")
+ *   - a tabular-nums "Xs / Xm Ys" elapsed counter rooted at the supplied
+ *     `anchor` timestamp. The counter increments client-side via a 1s
+ *     interval so the operator gets a live "since trigger" pulse without
+ *     polling the server.
+ *
+ * The interval is cleaned up on unmount AND when `anchor`/`status` change
+ * so React's StrictMode double-mount doesn't leave a leaked timer behind.
+ */
+function ActiveDeploymentBanner({
+  anchor,
+  status,
+}: {
+  anchor: Date | null;
+  status: DeployStatus;
+}) {
+  // Re-render every second so the elapsed counter ticks. We deliberately
+  // store the elapsed seconds in state (rather than computing inside the
+  // render with `Date.now()` and relying on a separate forceUpdate) so
+  // React batches the re-renders cleanly and the value is stable across
+  // child renders.
+  const [elapsedSec, setElapsedSec] = useState<number>(() =>
+    computeElapsedSec(anchor),
+  );
+
+  useEffect(() => {
+    // Compute once immediately so the first paint shows the right value
+    // (state init runs on mount but `anchor` might have changed between
+    // mount and the first effect cycle).
+    setElapsedSec(computeElapsedSec(anchor));
+    const id = setInterval(() => {
+      setElapsedSec(computeElapsedSec(anchor));
+    }, 1000);
+    return () => clearInterval(id);
+    // `status` is in the deps so the timer is rebuilt when the deploy
+    // transitions pending → in_progress (the anchor might shift then).
+  }, [anchor, status]);
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 bg-blue-950/40 border border-blue-800/60 rounded-lg">
+      <span
+        className="inline-block w-4 h-4 rounded-full border-2 border-blue-300 border-t-transparent animate-spin"
+        aria-label="Yükleniyor"
+        role="status"
+      />
+      <div className="flex-1 text-sm text-blue-100">
+        <span className="font-semibold">
+          {status === 'pending' ? 'Kuyruğa alındı' : 'Devam ediyor'}
+        </span>
+        <span className="text-blue-300/80 ml-2">
+          — pipeline {status === 'pending' ? 'başlatılıyor' : 'çalışıyor'}…
+        </span>
+      </div>
+      <span className="text-xs text-blue-200 tabular-nums font-mono">
+        {formatElapsed(elapsedSec)}
+      </span>
+    </div>
+  );
+}
+
+function computeElapsedSec(anchor: Date | null): number {
+  if (!anchor) return 0;
+  const t = anchor instanceof Date ? anchor.getTime() : new Date(anchor).getTime();
+  if (Number.isNaN(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 1000));
+}
+
+function formatElapsed(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${s}s`;
 }
 
 function StepStateBadge({ state }: { state: StepState }) {
