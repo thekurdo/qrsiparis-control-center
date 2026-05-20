@@ -20,12 +20,13 @@
  * one — the crash recovery cron will catch any orphans.
  */
 
-import { Worker } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
 import { and, eq, lt } from 'drizzle-orm';
 import IORedis from 'ioredis';
 
 import { db } from '@/db/client';
 import { deployments } from '@/db/schema';
+import { runUptimeProbe } from '@/lib/crons/uptime-probe';
 import { executeDeployment } from '@/lib/deploy/runner';
 
 const REDIS_URL = process.env['REDIS_URL'];
@@ -98,9 +99,80 @@ setInterval(async () => {
   }
 }, 60_000);
 
+// ---------------------------------------------------------------------------
+// Uptime probe (Phase H12 — observability)
+// ---------------------------------------------------------------------------
+// BullMQ repeatable job that pings every active tenant's /api/health every
+// 60s, tracks consecutive failures in process-local memory, and emits
+// `uptime.alert` / `uptime.recovered` audit rows + Slack messages on the
+// threshold cross. See `src/lib/crons/uptime-probe/index.ts` for the
+// observability contract.
+//
+// Why BullMQ-managed (not a bare setInterval like stuck-recovery above):
+//   - Repeatable job survives transient Redis blips (BullMQ re-enqueues).
+//   - Single-source-of-truth for "is the uptime tick running" — surfaces in
+//     the same BullMQ Dashboard the operator already uses for deploys.
+//   - Concurrency=1 + jobId='uptime-probe-tick' prevents accidental dual-
+//     instance overlap if a second worker container ever boots.
+//
+// Why concurrency 1: in-memory counter state must be process-local and
+// not race against itself. If we ever fan out to multiple worker pods
+// the counter map needs to move to Redis — until then the BullMQ worker
+// pool has a single slot for this queue.
+const UPTIME_QUEUE_NAME = 'uptime-probe';
+const UPTIME_REPEAT_JOB_NAME = 'uptime-probe-tick';
+const UPTIME_REPEAT_KEY = 'uptime-probe-repeat';
+
+export const uptimeProbeQueue = new Queue(UPTIME_QUEUE_NAME, { connection });
+export const uptimeProbeWorker = new Worker(
+  UPTIME_QUEUE_NAME,
+  async () => {
+    await runUptimeProbe();
+  },
+  {
+    connection,
+    concurrency: 1,
+  },
+);
+
+uptimeProbeWorker.on('failed', (job, err) => {
+  // eslint-disable-next-line no-console
+  console.error(`[uptime.failed] job=${job?.id} err=${err.message}`);
+});
+
+void (async () => {
+  // Clean up any previously-scheduled repeat (e.g. with a stale schedule)
+  // so a re-deploy with a changed cadence doesn't leave a ghost repeat
+  // running alongside the new one. `removeRepeatableByKey` is a no-op when
+  // the key doesn't exist yet.
+  try {
+    await uptimeProbeQueue.removeRepeatableByKey(UPTIME_REPEAT_KEY);
+  } catch {
+    /* no-op — first boot path */
+  }
+  await uptimeProbeQueue.add(
+    UPTIME_REPEAT_JOB_NAME,
+    {},
+    {
+      repeat: { every: 60_000, key: UPTIME_REPEAT_KEY },
+      removeOnComplete: { count: 50 },
+      removeOnFail: { count: 100 },
+    },
+  );
+  // eslint-disable-next-line no-console
+  console.info('[uptime.worker] repeatable job registered, every=60s');
+})().catch((err) => {
+  // eslint-disable-next-line no-console
+  console.error('[uptime.worker] failed to register repeatable job', err);
+});
+
 process.on('SIGTERM', async () => {
   // eslint-disable-next-line no-console
   console.info('[deploy.worker] SIGTERM, draining...');
-  await deploymentWorker.close();
+  await Promise.allSettled([
+    deploymentWorker.close(),
+    uptimeProbeWorker.close(),
+    uptimeProbeQueue.close(),
+  ]);
   process.exit(0);
 });
