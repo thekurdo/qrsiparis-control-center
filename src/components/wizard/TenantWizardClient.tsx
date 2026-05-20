@@ -113,7 +113,7 @@ const STORAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  * `resolveImageRef` parser (short `qrsiparis-app:vX.Y.Z` form gets
  * rewritten to `ghcr.io/thekurdo/qrsiparis-app:vX.Y.Z`).
  */
-const DEFAULT_APP_VERSION = 'qrsiparis-app:v0.1.7';
+const DEFAULT_APP_VERSION = 'qrsiparis-app:v0.1.13';
 
 interface StorageEnvelope {
   savedAt: number;

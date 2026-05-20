@@ -148,7 +148,7 @@ export const step03CoolifyAppCreate: PipelineStep = {
     // Env var names follow the customer-app's `src/lib/config/env.ts`
     // schema (Zod-validated at boot — wrong names crash `next start`
     // before instrumentation can swallow the error).
-    const appVersion = (ctx.deployment.appVersion?.trim() || 'qrsiparis-app:v0.1.7').split(':').pop() || 'v0.1.7';
+    const appVersion = (ctx.deployment.appVersion?.trim() || 'qrsiparis-app:v0.1.13').split(':').pop() || 'v0.1.13';
 
     // Resolve the per-tenant template (one of: classic | visual | minimal |
     // quickorder) so the customer-app's pre-start.sh auto-seed knows which
@@ -167,6 +167,12 @@ export const step03CoolifyAppCreate: PipelineStep = {
       ['AUTH_SECRET', randomBytes(32).toString('hex')],
       ['MASTER_KEY', randomBytes(32).toString('hex')],
       ['SESSION_SECRET', randomBytes(32).toString('hex')],
+      // Auth.js v5 derives staff-login callback URLs from AUTH_URL. Without
+      // this it falls back to the request Host header, which inside the
+      // container is `0.0.0.0:80` — so kasa/mutfak/garson signin pages 302
+      // into a dead origin. Pin to the public tenant domain so callbacks
+      // always resolve to the real HTTPS host Traefik is serving.
+      ['AUTH_URL', `https://${ctx.tenant.domain}`],
       // Customer-app required envs (validated by env.ts at boot).
       ['DATABASE_PATH', '/data/db.sqlite'],
       ['ASSETS_PATH', '/data/assets'],
