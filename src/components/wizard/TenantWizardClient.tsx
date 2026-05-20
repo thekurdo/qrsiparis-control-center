@@ -33,6 +33,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+import { buildConfigSnapshot } from '@/lib/cc/build-tenant-config';
+
 import { ProgressIndicator } from './ProgressIndicator';
 import { Step1BasicInfo } from './Step1BasicInfo';
 import { Step2Contract } from './Step2Contract';
@@ -52,7 +54,8 @@ export type Template =
   | 'singleflow'
   | 'visual'
   | 'quickorder'
-  | 'minimal';
+  | 'minimal'
+  | 'sushi';
 export type SalesPartner = 'yok' | 'proviat';
 
 export interface Step1Data {
@@ -215,11 +218,29 @@ export function TenantWizardClient({
     setSubmitError(null);
 
     try {
+      // Transform the step-bucketed wizard form-state into the canonical
+      // `RestaurantConfig` shape the customer-app validates at boot. We ship
+      // BOTH the raw wizard state (so the server can run its existing
+      // per-field validation) AND the precomputed `configSnapshot` (which
+      // the server persists verbatim to `tenants.config_snapshot`). Without
+      // this transform the snapshot's top-level keys are `step1..step6` and
+      // the customer container restart-loops on boot.
+      let configSnapshot;
+      try {
+        configSnapshot = buildConfigSnapshot(state);
+      } catch (err) {
+        throw new Error(
+          err instanceof Error
+            ? `Konfigürasyon oluşturulamadı: ${err.message}`
+            : 'Konfigürasyon oluşturulamadı',
+        );
+      }
+
       // Step 1: create the tenant row
       const tenantRes = await fetch('/api/internal/tenants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(state),
+        body: JSON.stringify({ ...state, configSnapshot }),
       });
       const tenantJson = (await tenantRes.json()) as
         | { success: true; data: { tenantId: string } }
@@ -297,6 +318,7 @@ export function TenantWizardClient({
         <Step3Domain
           data={state.step3}
           shortCode={state.step1?.shortCode}
+          locale={state.step5?.locale?.default}
           onNext={(d) => next('step3', d)}
           onBack={back}
         />
