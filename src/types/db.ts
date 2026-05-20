@@ -47,7 +47,8 @@ export type DeploymentType =
   | 'config_update'
   | 'app_update'
   | 'redeploy'
-  | 'rollback';
+  | 'rollback'
+  | 'delete';
 
 export type DeploymentStatus =
   | 'pending'

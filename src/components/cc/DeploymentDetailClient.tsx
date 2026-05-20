@@ -104,6 +104,12 @@ const STEP_TEMPLATES: Record<DeploymentType, ReadonlyArray<{ name: string; label
     { name: 'CONTAINER_RESTART', label: 'Container Yeniden Başlat' },
     { name: 'HEALTH_CHECK', label: 'Sağlık Kontrolü' },
   ],
+  delete: [
+    { name: 'PRECHECK', label: 'Ön Kontrol' },
+    { name: 'DELETE_FINAL_BACKUP', label: 'Son Yedek' },
+    { name: 'DELETE_COOLIFY_APP', label: 'Coolify Uygulamasını Sil' },
+    { name: 'DELETE_TENANT_MARK', label: 'Tenant İptal Et' },
+  ],
 };
 
 type StepState = 'pending' | 'running' | 'done' | 'failed';
@@ -172,6 +178,7 @@ const DEPLOY_TYPE_LABELS: Record<DeploymentType, string> = {
   app_update: 'Uygulama Güncelleme',
   redeploy: 'Yeniden Dağıt',
   rollback: 'Geri Alma',
+  delete: 'Tenant Silme',
 };
 
 function formatDateTime(d: Date | null | undefined): string {
