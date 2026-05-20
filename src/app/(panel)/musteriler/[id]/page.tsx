@@ -289,7 +289,7 @@ export default async function TenantDetailPage({
                 value={formatDate(tenant.contractEndDate)}
               />
               <Field
-                label="Aylık Ücret"
+                label="Yıllık Bakım Ücreti"
                 value={formatTl(tenant.monthlyFeeKurus)}
               />
               <Field

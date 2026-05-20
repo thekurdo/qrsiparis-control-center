@@ -54,11 +54,19 @@ import { recordAudit } from '@/lib/cc/audit';
  * Control center'ın bildiği "en son" tenant DB schema sürümü.
  * Yeni bir customer-product migration release edildiğinde bu sayı bumplenir.
  *
- * V1 release: 3 — onboarding (1), order-history (2), tier-config (3).
+ * V1 gerçek durum: customer-app v0.1.x tüm tenantlar schema v1'de. Önceki
+ * sabit `3` (onboarding/order-history/tier-config planlanmış migration'lar)
+ * gerçek migration'lar release edilmediği için tüm tenantları "drift"
+ * olarak işaretliyor ve detail page'de yanlış "Şema sürüm uyumsuzluğu"
+ * uyarısı çıkarıyordu (Bug #96).
+ *
+ * Bump this when customer-app ships a new schema migration; backfill
+ * tenants.schema_version in the same PR.
+ *
  * V1.5: customer-product side bunu bir yere kayıt etmeli ve bu sabitle
  * release-time'da senkron tutmalı (CI gate). V1'de manuel.
  */
-export const EXPECTED_TENANT_SCHEMA_VERSION = 3;
+export const EXPECTED_TENANT_SCHEMA_VERSION = 1;
 
 const IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
