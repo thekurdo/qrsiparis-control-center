@@ -197,9 +197,14 @@ export const step05ConfigInject: PipelineStep = {
       // 3. Ensure /data/config exists inside the container, copy the file,
       //    then chown to the runtime user. The image runs as 1001:1001
       //    (Next.js standalone server user from the Dockerfile).
+      // -u 0 (root) is required: the container's default user (nextjs / app,
+      // UID 1001) can't `mkdir` outside its own home or chown files it
+      // doesn't own. The mkdir and chown calls run as root; the docker cp
+      // file inherits root ownership and then chown drops it to 1001:1001
+      // so the runtime user (the app process) can read it.
       await execOrThrow(
         ssh,
-        `docker exec ${containerName} mkdir -p /data/config`,
+        `docker exec -u 0 ${containerName} mkdir -p /data/config`,
         'docker exec mkdir',
       );
       await execOrThrow(
@@ -209,7 +214,7 @@ export const step05ConfigInject: PipelineStep = {
       );
       await execOrThrow(
         ssh,
-        `docker exec ${containerName} chown ${CONTAINER_USER_UID}:${CONTAINER_USER_GID} ${CONFIG_PATH_IN_CONTAINER}`,
+        `docker exec -u 0 ${containerName} chown ${CONTAINER_USER_UID}:${CONTAINER_USER_GID} ${CONFIG_PATH_IN_CONTAINER}`,
         'docker exec chown',
       );
       ctx.log(
