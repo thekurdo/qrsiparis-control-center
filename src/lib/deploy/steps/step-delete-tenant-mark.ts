@@ -15,7 +15,7 @@ import { eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { tenants } from '@/db/schema';
-import { recordAudit } from '@/lib/audit';
+import { recordAudit } from '@/lib/cc/audit';
 
 import { type PipelineStep } from '../pipeline';
 
