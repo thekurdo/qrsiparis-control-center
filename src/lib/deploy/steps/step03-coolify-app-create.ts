@@ -149,6 +149,20 @@ export const step03CoolifyAppCreate: PipelineStep = {
     // schema (Zod-validated at boot — wrong names crash `next start`
     // before instrumentation can swallow the error).
     const appVersion = (ctx.deployment.appVersion?.trim() || 'qrsiparis-app:v0.1.7').split(':').pop() || 'v0.1.7';
+
+    // Resolve the per-tenant template (one of: classic | visual | minimal |
+    // quickorder) so the customer-app's pre-start.sh auto-seed knows which
+    // default menu to use. configSnapshot is a `jsonb` column (so the shape
+    // is unverified at runtime) — be defensive and fall back to `classic`
+    // on null/missing/wrong-type. The customer-app side already re-validates
+    // and falls back to `classic` for unknown values, so this is belt-and-
+    // braces.
+    const ALLOWED_TEMPLATES = new Set(['classic', 'visual', 'minimal', 'quickorder']);
+    const cfgSnap = ctx.tenant.configSnapshot as { branding?: { template?: unknown } } | null | undefined;
+    const rawTemplate = cfgSnap?.branding?.template;
+    const restaurantTemplate =
+      typeof rawTemplate === 'string' && ALLOWED_TEMPLATES.has(rawTemplate) ? rawTemplate : 'classic';
+
     const envs: Array<[string, string]> = [
       ['AUTH_SECRET', randomBytes(32).toString('hex')],
       ['MASTER_KEY', randomBytes(32).toString('hex')],
@@ -163,6 +177,11 @@ export const step03CoolifyAppCreate: PipelineStep = {
       ['TENANT_SHORT_CODE', ctx.tenant.shortCode],
       ['TENANT_DOMAIN', ctx.tenant.domain],
       ['TENANT_RESTAURANT_NAME', ctx.tenant.restaurantName],
+      // Tells pre-start.sh which default menu / category set to seed.
+      // Mirrors `configSnapshot.branding.template` so a `visual` tenant
+      // boots with cafe categories, a `quickorder` tenant with burger
+      // categories, etc. Defaults to 'classic' for backwards-compat.
+      ['RESTAURANT_TEMPLATE', restaurantTemplate],
       ['QRSIPARIS_AUTO_SEED', '1'],
     ];
     let envOk = 0;
