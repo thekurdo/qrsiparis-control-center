@@ -20,6 +20,8 @@ export { step08SslCertificate } from './step08-ssl-certificate';
 export { step09DomainVerification } from './step09-domain-verification';
 export { step10PostDeploy } from './step10-post-deploy';
 export { stepRedeployTrigger } from './step-redeploy-trigger';
+export { stepRollbackResolve } from './step-rollback-resolve';
+export { stepRollbackCoolifyPatch } from './step-rollback-coolify-patch';
 
 import type { PipelineStep } from '../pipeline';
 import { step01Precheck } from './step01-precheck';
@@ -33,6 +35,8 @@ import { step08SslCertificate } from './step08-ssl-certificate';
 import { step09DomainVerification } from './step09-domain-verification';
 import { step10PostDeploy } from './step10-post-deploy';
 import { stepRedeployTrigger } from './step-redeploy-trigger';
+import { stepRollbackResolve } from './step-rollback-resolve';
+import { stepRollbackCoolifyPatch } from './step-rollback-coolify-patch';
 
 export const initialDeploySteps: PipelineStep[] = [
   step01Precheck,
@@ -75,11 +79,17 @@ export const configUpdateSteps: PipelineStep[] = [
 ];
 
 /**
- * rollback = revert tenant config + redeploy.
- *
- * V1 stub: still no-op — rollback to a previous app version requires
- * the V1.5 `deployment_history` table to know what version to roll back
- * to. We don't have that yet, so leave this as an empty list and let
- * the runner's no-op path mark it success-but-warned.
+ * rollback = restore the previous successful deployment's image tag,
+ * then redeploy. V1.5 limitation: only the IMAGE is rolled back; the
+ * tenant's `configSnapshot` is not (a `previous_config_snapshot`
+ * column / `deployment_history` table is V2 — operators rolling back
+ * config should use `config_update` with the old JSON manually).
  */
-export const rollbackSteps: PipelineStep[] = [];
+export const rollbackSteps: PipelineStep[] = [
+  step01Precheck,
+  stepRollbackResolve,
+  stepRollbackCoolifyPatch,
+  stepRedeployTrigger,
+  step06ContainerStart,
+  step07HealthCheck,
+];
