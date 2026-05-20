@@ -253,6 +253,36 @@ export class CoolifyClient {
   }
 
   /**
+   * Set a single environment variable on a Coolify application — Coolify v4
+   * `POST /api/v1/applications/{uuid}/envs`. The endpoint takes a single env
+   * per call (NOT an array), so callers loop and POST one at a time. The
+   * deploy pipeline (step03) uses this to bake tenant-specific secrets +
+   * config (AUTH_SECRET, MASTER_KEY, TENANT_*, DATABASE_URL, QRSIPARIS_AUTO_SEED)
+   * into the new app before storage attaches, so the customer-product boots
+   * with a complete env on first start.
+   *
+   * Coolify rejects `is_build_time` — verified empirically. We only send the
+   * documented runtime-env flags here.
+   */
+  addEnv(
+    applicationUuid: string,
+    env: { key: string; value: string },
+  ): Promise<{ uuid: string }> {
+    return this.request<{ uuid: string }>(
+      'POST',
+      `/api/v1/applications/${encodeURIComponent(applicationUuid)}/envs`,
+      {
+        key: env.key,
+        value: env.value,
+        is_preview: false,
+        is_literal: true,
+        is_multiline: false,
+        is_shown_once: false,
+      },
+    );
+  }
+
+  /**
    * Poll the deployment status until it reaches a terminal state or the
    * caller-provided timeout expires. Polls every 500ms in tests (poll happens
    * fast against WireMock); production callers typically pass 90_000ms.

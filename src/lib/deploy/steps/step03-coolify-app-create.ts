@@ -13,7 +13,16 @@
  * static config. V1.5 will look them up via `GET /api/v1/servers`
  * once per server registered in our `servers` table.
  *
- * Post-create touch-ups (both defensive — log+continue on failure):
+ * Post-create touch-ups (all defensive — log+continue on failure):
+ *   0. POST `/applications/{uuid}/envs` once per tenant env var. Bakes
+ *      AUTH_SECRET + MASTER_KEY (freshly generated per tenant), the
+ *      TENANT_* trio (short code / domain / restaurant name),
+ *      QRSIPARIS_AUTO_SEED=1 (asks the customer-app pre-start.sh to
+ *      auto-migrate + seed demo data on first boot) and a pinned
+ *      DATABASE_URL=/data/db.sqlite so the SQLite client doesn't fall
+ *      back to a build-time placeholder. We run this BEFORE storage +
+ *      healthcheck so the env is already attached when Coolify
+ *      provisions the first container — saves one extra recreate.
  *   1. POST `/applications/{uuid}/storages` to attach a persistent `/data`
  *      volume. Without this the tenant's `restaurant.config.json` (written
  *      in step05) lives only inside the container fs and is wiped on every
@@ -25,10 +34,10 @@
  *      fails forever and Coolify marks the app `exited:unhealthy`. We
  *      force the check onto port 80 / `/api/health` here.
  *
- * Both calls are *intentionally* defensive: if either fails the deploy
- * continues, because the app will still be reachable (just without the
- * persistent volume / with a wrong healthcheck). A loud `warn` log line
- * gives ops a breadcrumb to fix up manually.
+ * All three are *intentionally* defensive: if any fails the deploy
+ * continues, because the app will still be reachable (just without env
+ * / persistent volume / with a wrong healthcheck). A loud `warn` log
+ * line gives ops a breadcrumb to fix up manually.
  *
  * Rollback: best-effort `deleteApp(uuid)`. We swallow errors because
  * the surrounding rollback loop already logs warnings and we want every
@@ -39,7 +48,51 @@
  * skip the create call and reuse it.
  */
 
+import { randomBytes } from 'node:crypto';
+
 import { ERROR_CODES, PipelineError, type PipelineStep } from '../pipeline';
+
+/**
+ * Resolve the image name + tag for this tenant's Coolify app.
+ *
+ * Priority order:
+ *   1. `ctx.deployment.appVersion` — the canonical per-deployment version
+ *      stamped onto the deployments row. Values look like:
+ *        - `qrsiparis-app:v0.1.1` (local-style short name → rewrite to ghcr)
+ *        - `ghcr.io/thekurdo/qrsiparis-app:v0.1.1` (explicit registry → as-is)
+ *   2. `TENANT_APP_IMAGE` env var on the worker — operator override.
+ *   3. `nginx:alpine` — last-resort placeholder so step03 still creates
+ *      something Traefik can route during smoke tests.
+ *
+ * Returns `[imageName, imageTag]` ready to hand to Coolify's
+ * `docker_registry_image_name` + `docker_registry_image_tag` fields.
+ */
+function resolveImageRef(deploymentAppVersion: string | null | undefined): [string, string] {
+  const candidate = deploymentAppVersion?.trim()
+    ? deploymentAppVersion.trim()
+    : (process.env['TENANT_APP_IMAGE'] ?? 'nginx:alpine');
+
+  // Split on the LAST `:` so registry hosts like `ghcr.io:443/...` still parse,
+  // but only when that `:` precedes a tag (no `/` after it).
+  const lastColon = candidate.lastIndexOf(':');
+  let rawName = candidate;
+  let rawTag = 'latest';
+  if (lastColon > 0 && !candidate.slice(lastColon).includes('/')) {
+    rawName = candidate.slice(0, lastColon);
+    rawTag = candidate.slice(lastColon + 1) || 'latest';
+  }
+
+  // Rewrite the local short name `qrsiparis-app` to the full ghcr path so
+  // Coolify can actually pull it. An explicit `ghcr.io/...` (or any path
+  // containing `/`) passes through untouched.
+  const imageName = rawName.includes('/')
+    ? rawName
+    : rawName === 'qrsiparis-app'
+      ? 'ghcr.io/thekurdo/qrsiparis-app'
+      : rawName;
+
+  return [imageName, rawTag];
+}
 
 export const step03CoolifyAppCreate: PipelineStep = {
   name: 'COOLIFY_APP_CREATE',
@@ -58,15 +111,11 @@ export const step03CoolifyAppCreate: PipelineStep = {
       );
     }
 
-    // V1: use `/applications/dockerimage` with nginx:alpine as a
-    // proof-of-concept tenant. The dockercompose endpoint in Coolify
-    // 4.0.0 returns a UUID but never persists the app (GET/DELETE 404).
-    // V1.5 swaps `nginx:alpine` for the real `qrsiparis-app` image.
-    const imageRef = process.env['TENANT_APP_IMAGE'] ?? 'nginx:alpine';
-    const [imageName, imageTagRaw] = imageRef.includes(':')
-      ? imageRef.split(':', 2)
-      : [imageRef, 'latest'];
-    const imageTag = imageTagRaw || 'latest';
+    // Image resolution prefers the per-deployment `appVersion` column
+    // (e.g. `qrsiparis-app:v0.1.1`) and falls back through the operator
+    // override env to a placeholder. See `resolveImageRef` above.
+    const [imageName, imageTag] = resolveImageRef(ctx.deployment.appVersion);
+    ctx.log('info', `coolify image resolved: ${imageName}:${imageTag}`);
 
     try {
       const result = await ctx.coolifyClient.createDockerImageApp({
@@ -74,7 +123,7 @@ export const step03CoolifyAppCreate: PipelineStep = {
         projectUuid,
         serverUuid,
         environmentName: 'production',
-        imageName: imageName!,
+        imageName,
         imageTag,
         portsExposes: '80',
         domains: `https://${ctx.tenant.domain}`,
@@ -90,6 +139,35 @@ export const step03CoolifyAppCreate: PipelineStep = {
     }
 
     // --- defensive post-create touch-ups ---------------------------------
+    // (0) Inject tenant env vars BEFORE storage attaches, so the first
+    //     container Coolify boots already has the full env (saves one
+    //     extra recreate). The endpoint takes ONE env per POST, so we
+    //     loop. Individual failures are warn+continue — env vars aren't
+    //     load-bearing for the container to *start*, only to *work*, so
+    //     we never throw from this loop.
+    const envs: Array<[string, string]> = [
+      ['AUTH_SECRET', randomBytes(32).toString('hex')],
+      ['MASTER_KEY', randomBytes(32).toString('hex')],
+      ['TENANT_SHORT_CODE', ctx.tenant.shortCode],
+      ['TENANT_DOMAIN', ctx.tenant.domain],
+      ['TENANT_RESTAURANT_NAME', ctx.tenant.restaurantName],
+      ['QRSIPARIS_AUTO_SEED', '1'],
+      ['DATABASE_URL', '/data/db.sqlite'],
+    ];
+    let envOk = 0;
+    for (const [key, value] of envs) {
+      try {
+        await ctx.coolifyClient.addEnv(ctx.coolifyUuid, { key, value });
+        envOk++;
+      } catch (e) {
+        ctx.log(
+          'warn',
+          `coolify env set ${key} failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    ctx.log('info', `coolify envs set: ${envOk}/${envs.length}`);
+
     // (1) Attach a persistent /data volume so step05 can drop the
     //     tenant config there and have it survive container restarts.
     try {
