@@ -19,6 +19,7 @@ export const dynamic = 'force-dynamic';
  * persist it across the page transition.)
  */
 
+import type { Route } from 'next';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
@@ -80,7 +81,7 @@ export default function TwoFactorVerifyPage() {
         return;
       }
 
-      router.push(result.url ?? callbackUrl);
+      router.push((result.url ?? callbackUrl) as Route);
       router.refresh();
     } catch (err) {
       setError('Bağlantı hatası. Tekrar deneyin.');

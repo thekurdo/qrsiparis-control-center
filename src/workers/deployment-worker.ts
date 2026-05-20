@@ -46,10 +46,8 @@ export const deploymentWorker = new Worker(
     connection,
     concurrency: 3,
     limiter: { max: 5, duration: 60_000 },
-    settings: {
-      stalledInterval: 600_000,
-      maxStalledCount: 1,
-    },
+    stalledInterval: 600_000,
+    maxStalledCount: 1,
   },
 );
 

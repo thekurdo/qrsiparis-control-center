@@ -24,6 +24,7 @@
  * use Cron / Audit / Settings.
  */
 
+import type { Route } from 'next';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -153,7 +154,7 @@ export function CCSidebar({ role }: { role: OperatorRole }) {
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   return (
     <Link
-      href={item.href}
+      href={item.href as Route}
       className={`flex items-center justify-between px-3 py-2 rounded-md transition-colors ${
         active
           ? 'bg-slate-700/70 text-slate-100'

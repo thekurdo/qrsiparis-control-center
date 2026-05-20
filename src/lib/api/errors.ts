@@ -99,7 +99,7 @@ export class RateLimitedError extends ApiBaseError {
 }
 
 export class InternalError extends ApiBaseError {
-  public readonly cause?: unknown;
+  public override readonly cause?: unknown;
 
   constructor(message = 'Beklenmeyen bir hata oluştu', cause?: unknown) {
     super('INTERNAL_ERROR', message);

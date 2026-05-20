@@ -23,6 +23,7 @@ export const dynamic = 'force-dynamic';
  * an inline error.
  */
 
+import type { Route } from 'next';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
@@ -89,7 +90,7 @@ export default function LoginPage() {
       }
 
       // Success — Auth.js sets the session cookie. Navigate to the panel.
-      router.push(result.url ?? callbackUrl);
+      router.push((result.url ?? callbackUrl) as Route);
       router.refresh();
     } catch (err) {
       // Unexpected (network failure, etc.) — surface a generic error.

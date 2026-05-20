@@ -1,3 +1,4 @@
+import type { Route } from 'next';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
@@ -55,7 +56,7 @@ export function KpiCard({
   );
 
   return link ? (
-    <Link href={link} className="block">
+    <Link href={link as Route} className="block">
       {inner}
     </Link>
   ) : (

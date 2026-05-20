@@ -15,6 +15,7 @@
  * unfiltered visit still returns the most recent 100 across all types.
  */
 
+import type { Route } from 'next';
 import Link from 'next/link';
 import { and, desc, eq, type SQL } from 'drizzle-orm';
 
@@ -246,7 +247,7 @@ function FilterChips({
           return (
             <Link
               key={f.value}
-              href={buildHref({ status: f.value })}
+              href={buildHref({ status: f.value }) as Route}
               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 isActive
                   ? 'bg-blue-600 text-white'
@@ -264,7 +265,7 @@ function FilterChips({
           return (
             <Link
               key={f.value}
-              href={buildHref({ type: f.value })}
+              href={buildHref({ type: f.value }) as Route}
               className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
                 isActive
                   ? 'bg-blue-700/60 text-blue-100 border border-blue-600'

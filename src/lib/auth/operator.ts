@@ -52,6 +52,7 @@
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { eq, sql } from 'drizzle-orm';
 import NextAuth, { CredentialsSignin, type DefaultSession } from 'next-auth';
+import type { Adapter } from 'next-auth/adapters';
 import Credentials from 'next-auth/providers/credentials';
 
 import { db, getDb } from '@/db/client';
@@ -105,12 +106,15 @@ declare module 'next-auth' {
   }
 }
 
-declare module 'next-auth/jwt' {
-  interface JWT {
-    role?: 'admin' | 'operator';
-    username?: string;
-  }
-}
+// NOTE: We augment the `JWT` interface so our jwt() callback can stamp
+// `role` + `username` onto the token, and `session()` can read them back
+// out of `token`. Both `next-auth/jwt` and `@auth/core/jwt` are unhappy
+// targets for declare-module under pnpm's nested install layout
+// (next-auth/jwt is a pure re-export with no own declarations to merge
+// into, and @auth/core isn't a direct dependency so module-resolution
+// can't find it from our tsconfig). We side-step the issue by adding the
+// fields directly onto our session/user types and asserting `token` is
+// the augmented shape at the call sites that need it.
 
 // ---------------------------------------------------------------------------
 // Brute-force tuning constants (R12)
@@ -151,7 +155,13 @@ export const authConfig = {
   // Drizzle's `is(value, PgDatabase)` brand check which inspects the
   // prototype chain — the Proxy's empty target `{}` has the wrong
   // prototype and the brand check fails with "Unsupported database type".
-  adapter: DrizzleAdapter(getDb()),
+  //
+  // Cast: `@auth/drizzle-adapter` pulls @auth/core@0.41.x for its types,
+  // but `next-auth@5.0.0-beta.25` pulls @auth/core@0.37.x. The two adapter
+  // typings differ structurally on the augmented User shape (`username` +
+  // `role`). Until both packages converge on a single @auth/core peer the
+  // cast keeps the call site type-safe at the usage edge.
+  adapter: DrizzleAdapter(getDb()) as Adapter,
 
   session: {
     strategy: 'jwt' as const,
@@ -351,13 +361,22 @@ export const authConfig = {
      * Called whenever a JWT is created (sign-in) or read (subsequent
      * requests). We mirror `role` and `username` from the user object
      * onto the token so the session callback can surface them.
+     *
+     * The `token` parameter is typed as the upstream `JWT` (a
+     * Record<string, unknown> at runtime) — we cast to our augmented
+     * shape so the field access typechecks. See the module-augmentation
+     * note above for why we don't declare-module the JWT directly.
      */
     async jwt({ token, user }) {
+      const t = token as typeof token & {
+        role?: 'admin' | 'operator';
+        username?: string;
+      };
       if (user) {
-        token.role = user.role;
-        token.username = user.username;
+        t.role = user.role;
+        t.username = user.username;
       }
-      return token;
+      return t;
     },
 
     /**
@@ -365,14 +384,18 @@ export const authConfig = {
      * claims into `session.user` so route handlers can read them.
      */
     async session({ session, token }) {
-      if (token.sub) {
-        session.user.id = token.sub;
+      const t = token as typeof token & {
+        role?: 'admin' | 'operator';
+        username?: string;
+      };
+      if (t.sub) {
+        session.user.id = t.sub;
       }
-      if (token.role) {
-        session.user.role = token.role;
+      if (t.role) {
+        session.user.role = t.role;
       }
-      if (token.username) {
-        session.user.username = token.username;
+      if (t.username) {
+        session.user.username = t.username;
       }
       return session;
     },

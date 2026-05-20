@@ -5,19 +5,13 @@ const nextConfig: NextConfig = {
   output: 'standalone',
   // Strict mode catches accidental side-effects
   reactStrictMode: true,
-  // Typed routes — disabled in production build for now. There are ~17
-  // pre-existing dynamic router.push() callsites that pass plain strings;
-  // re-enable after migrating those to typed Route<...> values.
+  // Typed routes — dynamic router.push() / Link href call sites that build
+  // URLs at runtime are explicitly cast to `Route` (imported from `next`)
+  // where needed. Adapter / JWT peer-version mismatch is documented in
+  // `src/lib/auth/operator.ts`.
   typedRoutes: false,
-  // Production tsc has known errors (next-auth adapter peer mismatch,
-  // dynamic Link href values, FormEvent type-imports). E2E + dev all
-  // pass; production parity will be restored once those are cleaned up.
   typescript: {
-    ignoreBuildErrors: true,
-  },
-  // Same story for ESLint — runtime is fine, build-time lint is noise.
-  eslint: {
-    ignoreDuringBuilds: true,
+    ignoreBuildErrors: false,
   },
   // Packages that ship native (.node) addons or non-ESM assets must be
   // externalised so Turbopack doesn't try to bundle them into a server

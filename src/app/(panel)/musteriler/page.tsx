@@ -14,6 +14,7 @@
  * orders by `created_at DESC`.
  */
 
+import type { Route } from 'next';
 import Link from 'next/link';
 import { and, desc, eq, ilike, or, type SQL } from 'drizzle-orm';
 
@@ -254,7 +255,7 @@ function FilterChips({
         return (
           <Link
             key={f.value}
-            href={buildHref(f.value)}
+            href={buildHref(f.value) as Route}
             className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               isActive
                 ? 'bg-blue-600 text-white'

@@ -43,6 +43,7 @@
  */
 
 import { and, desc, eq, gte, lt, sql, type SQL } from 'drizzle-orm';
+import type { Route } from 'next';
 import Link from 'next/link';
 
 import { db } from '@/db/client';
@@ -429,7 +430,7 @@ export default async function AuditLogPage({
         <div className="flex gap-2">
           {page > 1 ? (
             <Link
-              href={withPage(page - 1)}
+              href={withPage(page - 1) as Route}
               data-testid="audit-pager-prev"
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded"
             >
@@ -442,7 +443,7 @@ export default async function AuditLogPage({
           )}
           {page < totalPages ? (
             <Link
-              href={withPage(page + 1)}
+              href={withPage(page + 1) as Route}
               data-testid="audit-pager-next"
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded"
             >
