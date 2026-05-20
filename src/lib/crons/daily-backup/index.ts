@@ -121,7 +121,7 @@ function backupFilename(shortCode: string, now: Date = new Date()): string {
   const yyyy = now.getUTCFullYear();
   const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(now.getUTCDate()).padStart(2, '0');
-  return `tenant-${shortCode}-${yyyy}${mm}${dd}.sql`;
+  return `tenant-${shortCode}-${yyyy}${mm}${dd}.sqlite.gz`;
 }
 
 interface BackupTarget {
@@ -218,13 +218,37 @@ async function backupOne(t: BackupTarget): Promise<BackupResult> {
       username: t.username,
       privateKey,
     });
-    // The mock dictionary keys on a `pg_dump`-prefixed command and returns
-    // canned output. In prod we'd pipe to a host-side file and capture
-    // size via `stat`; in V1 we treat stdout length as a stand-in for
-    // backup size (mock returns ~45 bytes of canned text).
-    const result = await client.exec(
-      `pg_dump --no-owner --no-acl -Fc /data/${t.shortCode}/db.sqlite`,
-    );
+    // Tenant DBs are SQLite (one per container) at /data/db.sqlite.
+    // We run `sqlite3 .backup` inside the tenant container, then copy
+    // the resulting file out to a host-side daily backup directory,
+    // then gzip. The host directory `/var/backups/qrsiparis/` is
+    // created with `mkdir -p` on every run (idempotent).
+    //
+    // Container lookup: Coolify names the tenant container as
+    // `{coolifyAppUuid}-{ts}`. We grep `docker ps` by the tenant's
+    // short_code-derived storage volume label
+    // (volume name pattern: `{coolifyAppUuid}-{shortCode}-data`).
+    //
+    // Mock mode: ssh client returns canned output. We still go through
+    // the same command list so the audit row metadata is shaped
+    // identically to prod.
+    const datestamp = backupFilename(t.shortCode).match(/(\d{8})/)?.[1] ?? '00000000';
+    const hostPath = `/var/backups/qrsiparis/tenant-${t.shortCode}-${datestamp}.sqlite.gz`;
+    const cmd = [
+      `mkdir -p /var/backups/qrsiparis`,
+      // Find the tenant's Coolify container by its persistent volume
+      `CN=$(docker ps --format '{{.Names}}' | while read c; do docker inspect "$c" --format '{{range .Mounts}}{{.Name}} {{end}}' 2>/dev/null | grep -q "${t.shortCode}-data" && { echo "$c"; break; }; done)`,
+      `[ -z "$CN" ] && { echo "no container for ${t.shortCode}" >&2; exit 1; }`,
+      // SQLite hot backup inside the container; .backup is atomic
+      `docker exec "$CN" sqlite3 /data/db.sqlite ".backup /tmp/db-backup.sqlite"`,
+      // Copy out + gzip + drop the in-container temp file
+      `docker cp "$CN:/tmp/db-backup.sqlite" /tmp/db-backup-${t.shortCode}.sqlite`,
+      `docker exec "$CN" rm -f /tmp/db-backup.sqlite`,
+      `gzip -9 -c /tmp/db-backup-${t.shortCode}.sqlite > ${hostPath}`,
+      `rm -f /tmp/db-backup-${t.shortCode}.sqlite`,
+      `stat -c '%s' ${hostPath}`,
+    ].join(' && ');
+    const result = await client.exec(cmd);
     await client.disconnect();
 
     if (result.exitCode !== 0) {
@@ -249,11 +273,19 @@ async function backupOne(t: BackupTarget): Promise<BackupResult> {
       };
     }
 
-    // `stdout.length` is a usable proxy for "bytes in the dump" — Node strings
-    // are UTF-16 in memory but `.length` reflects code units which closely
-    // tracks byte count for ASCII (the pg_dump SQL output is). V1.5 will
-    // capture the real file size via a `stat -c %s` follow-up call.
-    const backupSize = Buffer.byteLength(result.stdout, 'utf8');
+    // The final command in the chain is `stat -c '%s' <path>` so the last
+    // non-empty stdout line is the gzip'd backup's byte count. Fall back
+    // to a UTF-8 byte count of the whole stdout (which is what the mock
+    // dictionary's canned output gives) so audit metadata always has a
+    // numeric backupSize even when running against `client-mock`.
+    const sizeLine = result.stdout
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => /^\d+$/.test(l))
+      .pop();
+    const backupSize = sizeLine
+      ? Number(sizeLine)
+      : Buffer.byteLength(result.stdout, 'utf8');
 
     await recordAudit({
       userId: null,
