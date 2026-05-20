@@ -15,6 +15,7 @@
  * switching (client-side, see <Tabs>) is instant after first paint.
  */
 
+import type { Route } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { and, desc, eq } from 'drizzle-orm';
@@ -32,6 +33,7 @@ import {
 } from '@/components/StatusPill';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/Tabs';
 import { TenantLifecycleActions } from '@/components/cc/TenantLifecycleActions';
+import { TenantRedeployButton } from '@/components/cc/TenantRedeployButton';
 import { formatTl } from '@/lib/utils/format-tl';
 import { EXPECTED_TENANT_SCHEMA_VERSION } from '@/lib/crons/tenant-schema-drift-detector';
 
@@ -60,30 +62,46 @@ export default async function TenantDetailPage({
     .limit(1);
   if (!tenant) notFound();
 
-  const [server, recentDeployments, recentAudit] = await Promise.all([
-    tenant.serverIdRef
-      ? db
-          .select()
-          .from(servers)
-          .where(eq(servers.id, tenant.serverIdRef))
-          .limit(1)
-          .then((r) => r[0] ?? null)
-      : Promise.resolve(null),
-    db
-      .select()
-      .from(deployments)
-      .where(eq(deployments.tenantId, id))
-      .orderBy(desc(deployments.createdAt))
-      .limit(10),
-    db
-      .select()
-      .from(auditLog)
-      .where(
-        and(eq(auditLog.entityType, 'tenant'), eq(auditLog.entityId, id)),
-      )
-      .orderBy(desc(auditLog.createdAt))
-      .limit(50),
-  ]);
+  const [server, recentDeployments, lastSuccessfulDeploy, recentAudit] =
+    await Promise.all([
+      tenant.serverIdRef
+        ? db
+            .select()
+            .from(servers)
+            .where(eq(servers.id, tenant.serverIdRef))
+            .limit(1)
+            .then((r) => r[0] ?? null)
+        : Promise.resolve(null),
+      db
+        .select()
+        .from(deployments)
+        .where(eq(deployments.tenantId, id))
+        .orderBy(desc(deployments.createdAt))
+        .limit(10),
+      // For the "current image" Field on the General tab. Pulling the most
+      // recent SUCCESS (not just any deploy) so an in-progress / failed
+      // attempt doesn't lie about what's actually running.
+      db
+        .select({ appVersion: deployments.appVersion })
+        .from(deployments)
+        .where(
+          and(
+            eq(deployments.tenantId, id),
+            eq(deployments.status, 'success'),
+          ),
+        )
+        .orderBy(desc(deployments.createdAt))
+        .limit(1)
+        .then((r) => r[0] ?? null),
+      db
+        .select()
+        .from(auditLog)
+        .where(
+          and(eq(auditLog.entityType, 'tenant'), eq(auditLog.entityId, id)),
+        )
+        .orderBy(desc(auditLog.createdAt))
+        .limit(50),
+    ]);
 
   const contactSummary = [tenant.contactName, tenant.contactPhone]
     .filter(Boolean)
@@ -159,6 +177,33 @@ export default async function TenantDetailPage({
           >
             SSH (V1.5)
           </button>
+          {/* Edit config — admin-only on the API side, but we render the
+              link for everyone; the edit page itself re-checks the role
+              and 403s if a non-admin lands on it directly. */}
+          <Link
+            href={`/musteriler/${tenant.id}/edit` as Route}
+            className={`px-3 py-2 rounded text-sm font-medium ${
+              tenant.status === 'cancelled'
+                ? 'bg-slate-700 opacity-50 cursor-not-allowed text-slate-300'
+                : 'bg-blue-600 hover:bg-blue-700 text-white'
+            }`}
+            aria-disabled={tenant.status === 'cancelled'}
+            title={
+              tenant.status === 'cancelled'
+                ? 'İptal edilmiş müşteri için konfig düzenlenemez'
+                : undefined
+            }
+          >
+            Düzenle
+          </Link>
+          {/* Redeploy: re-run with the same image + same config. Disabled
+              client-side for cancelled tenants and no-container tenants
+              (the API would 422 those anyway). */}
+          <TenantRedeployButton
+            tenantId={tenant.id}
+            status={tenant.status}
+            containerStatus={tenant.containerStatus}
+          />
           {/* S13 — pause/resume/cancel. Cancelled tenants get a disabled
               row of buttons (TenantLifecycleActions handles that), so the
               UI still shows the available action vocabulary while the
@@ -261,6 +306,22 @@ export default async function TenantDetailPage({
                 label="Şema Versiyonu"
                 value={`v${tenant.schemaVersion}`}
               />
+              <Field
+                label="Aktif İmaj"
+                value={
+                  lastSuccessfulDeploy?.appVersion ? (
+                    <span className="font-mono text-xs">
+                      {lastSuccessfulDeploy.appVersion}
+                    </span>
+                  ) : (
+                    '—'
+                  )
+                }
+              />
+              <Field
+                label="Konfig Versiyonu"
+                value={`v${tenant.configVersion}`}
+              />
             </dl>
           </Card>
 
@@ -278,9 +339,19 @@ export default async function TenantDetailPage({
 
         <TabsContent value="config">
           <Card>
-            <h2 className="font-semibold mb-4 text-slate-100">
-              Konfigürasyon (Snapshot v{tenant.configVersion})
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-semibold text-slate-100">
+                Konfigürasyon (Snapshot v{tenant.configVersion})
+              </h2>
+              {tenant.status !== 'cancelled' ? (
+                <Link
+                  href={`/musteriler/${tenant.id}/edit` as Route}
+                  className="text-sm text-blue-400 hover:underline"
+                >
+                  Düzenle →
+                </Link>
+              ) : null}
+            </div>
             {tenant.configSnapshot ? (
               <pre className="bg-slate-900 p-4 rounded text-xs overflow-auto max-h-[600px] text-slate-200 border border-slate-700">
                 {JSON.stringify(tenant.configSnapshot, null, 2)}
@@ -299,9 +370,17 @@ export default async function TenantDetailPage({
 
         <TabsContent value="deploy">
           <Card>
-            <h2 className="font-semibold mb-4 text-slate-100">
-              Son Deploy&apos;lar
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-semibold text-slate-100">
+                Son Deploy&apos;lar
+              </h2>
+              <Link
+                href={`/deployments?tenantId=${tenant.id}` as Route}
+                className="text-sm text-blue-400 hover:underline"
+              >
+                Tüm geçmişi gör →
+              </Link>
+            </div>
             <div className="space-y-2">
               {recentDeployments.map((d) => (
                 <Link
