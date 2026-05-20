@@ -17,7 +17,7 @@
  */
 'use client';
 
-import { type FormEvent, type ReactNode, useRef, useState } from 'react';
+import { type FormEvent, type ReactNode, useState } from 'react';
 import { z } from 'zod';
 
 import type { Step1Data } from './TenantWizardClient';
@@ -61,21 +61,29 @@ const EMPTY: Step1Data = {
 
 /**
  * Turkish-aware slug helper. Maps Turkish-specific letters to their ASCII
- * equivalents before stripping anything that isn't `[a-z0-9-]`, then
- * collapses repeated dashes and trims them off the ends.
+ * equivalents BEFORE lowercasing or stripping — this matters for uppercase
+ * `İ` which would otherwise lowercase to a dotted-i variant that the regex
+ * doesn't recognize as `[a-z]`, producing breakage like `"SUSHİ" → "sush-i"`.
+ * After transliteration we lowercase, replace any non-alnum run with a single
+ * dash, then trim and collapse dashes.
  */
 function autoSlug(name: string): string {
+  const turkishMap: Record<string, string> = {
+    'Ç': 'c', 'ç': 'c',
+    'Ğ': 'g', 'ğ': 'g',
+    'İ': 'i', 'I': 'i', 'ı': 'i',
+    'Ö': 'o', 'ö': 'o',
+    'Ş': 's', 'ş': 's',
+    'Ü': 'u', 'ü': 'u',
+  };
   return name
+    .split('')
+    .map((c) => turkishMap[c] ?? c)
+    .join('')
     .toLowerCase()
-    .replace(/ı/g, 'i')
-    .replace(/ş/g, 's')
-    .replace(/ğ/g, 'g')
-    .replace(/ü/g, 'u')
-    .replace(/ö/g, 'o')
-    .replace(/ç/g, 'c')
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-')
     .slice(0, 50);
 }
 
@@ -89,24 +97,27 @@ export function Step1BasicInfo({
   const [form, setForm] = useState<Step1Data>(data ?? EMPTY);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Track the last auto-generated slug so we know whether the user has
-  // edited shortCode manually. Once they do, we stop overwriting it.
-  const lastAutoSlug = useRef<string>(data ? autoSlug(data.restaurantName) : '');
+  // Once the operator types directly into the shortCode field we stop
+  // auto-generating it from `restaurantName`. Pre-filling from a hydrated
+  // draft doesn't flip the flag; only the dedicated change handler does.
+  const [shortCodeManuallyEdited, setShortCodeManuallyEdited] = useState<boolean>(
+    Boolean(
+      data?.shortCode && data.shortCode !== autoSlug(data?.restaurantName ?? ''),
+    ),
+  );
 
   function handleNameChange(value: string) {
     const generated = autoSlug(value);
-    setForm((prev) => {
-      // Only auto-fill shortCode if the user hasn't customized it.
-      const shouldAutoFill =
-        prev.shortCode === '' || prev.shortCode === lastAutoSlug.current;
-      const next = {
-        ...prev,
-        restaurantName: value,
-        shortCode: shouldAutoFill ? generated : prev.shortCode,
-      };
-      lastAutoSlug.current = generated;
-      return next;
-    });
+    setForm((prev) => ({
+      ...prev,
+      restaurantName: value,
+      shortCode: shortCodeManuallyEdited ? prev.shortCode : generated,
+    }));
+  }
+
+  function handleShortCodeChange(value: string) {
+    setShortCodeManuallyEdited(true);
+    setForm((prev) => ({ ...prev, shortCode: value }));
   }
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -152,7 +163,7 @@ export function Step1BasicInfo({
       <Field
         label="Kısa Kod (URL slug)"
         value={form.shortCode}
-        onChange={(v) => setForm((prev) => ({ ...prev, shortCode: v }))}
+        onChange={handleShortCodeChange}
         hint="Restoran adından otomatik üretilir, gerekirse düzenleyin. Sadece küçük harf, rakam ve tire."
         error={errors['shortCode']}
         required

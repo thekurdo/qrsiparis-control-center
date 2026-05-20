@@ -72,6 +72,12 @@ const TEMPLATES: TemplateMeta[] = [
     desc: 'Tipografi ağırlıklı, sade tasarım.',
     defaultColor: '#1e293b',
   },
+  {
+    key: 'sushi',
+    label: 'Sushi & Japon',
+    desc: 'Maki, nigiri, sashimi vitrini — koyu deniz mavisi temalı.',
+    defaultColor: '#1E3A8A',
+  },
 ];
 
 const FONT_PRESETS = [
@@ -92,7 +98,7 @@ const hexColorRegex = /^#[0-9a-fA-F]{6}$/;
 
 const schema = z
   .object({
-    template: z.enum(['classic', 'singleflow', 'visual', 'quickorder', 'minimal']),
+    template: z.enum(['classic', 'singleflow', 'visual', 'quickorder', 'minimal', 'sushi']),
     primaryColor: z
       .string()
       .regex(hexColorRegex, 'Hex format: #RRGGBB'),

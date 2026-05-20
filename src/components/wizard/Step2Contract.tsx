@@ -42,19 +42,19 @@ const TIERS: Record<
     label: 'Başlangıç',
     desc: '1-15 masa, 1 mutfak istasyonu, 2 dil',
     setupKurus: 1_500_000,
-    monthlyKurus: 80_000,
+    monthlyKurus: 960_000,
   },
   standart: {
     label: 'Standart',
     desc: '16-40 masa, çoklu istasyon, 3 dil',
     setupKurus: 2_200_000,
-    monthlyKurus: 120_000,
+    monthlyKurus: 1_440_000,
   },
   profesyonel: {
     label: 'Profesyonel',
     desc: '41-80 masa, garson modülü, 4+ dil',
     setupKurus: 3_500_000,
-    monthlyKurus: 180_000,
+    monthlyKurus: 2_160_000,
   },
 };
 
@@ -203,7 +203,7 @@ export function Step2Contract({
                     {t.label}
                   </span>
                   <span className="text-xs text-slate-400">
-                    {(t.monthlyKurus / 100).toLocaleString('tr-TR')} TL/ay
+                    {(t.monthlyKurus / 100).toLocaleString('tr-TR')} TL/yıl
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">{t.desc}</p>
@@ -254,7 +254,7 @@ export function Step2Contract({
         {/* Duration radio */}
         <div>
           <span className="block text-sm text-slate-300 mb-1">
-            Süre <span className="text-red-400">*</span>
+            Sözleşme Süresi <span className="text-red-400">*</span>
           </span>
           <div className="flex gap-2">
             {DURATION_OPTIONS.map((months) => {
@@ -300,7 +300,7 @@ export function Step2Contract({
           htmlFor="monthlyFee"
           className="block text-sm text-slate-300 mb-1"
         >
-          Aylık Ücret (TL) <span className="text-red-400">*</span>
+          Yıllık Bakım Ücreti (TL) <span className="text-red-400">*</span>
         </label>
         <input
           id="monthlyFee"

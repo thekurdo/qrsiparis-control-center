@@ -15,6 +15,16 @@ const LOCALES = [
   { code: 'de', label: 'Deutsch', flag: '🇩🇪' },
 ];
 
+// Tier-driven default locale set. The operator can still toggle individual
+// languages in the UI; this is just the initial pre-selection on first
+// arrival at Step 5. Mirrors the tier descriptions in Step 2
+// ("2 dil" / "3 dil" / "4+ dil").
+const TIER_DEFAULT_LOCALES: Record<keyof typeof TIER_DEFAULTS, string[]> = {
+  baslangic: ['tr', 'en'],
+  standart: ['tr', 'en', 'ar'],
+  profesyonel: ['tr', 'en', 'ar', 'ru', 'de'],
+};
+
 export interface Step5Data {
   modules: { customerPwa: boolean; cashier: boolean; kitchen: boolean; waiter: boolean; admin: boolean; sms: boolean; printer: boolean; kioskMode: boolean };
   locale: { default: string; enabled: string[] };
@@ -25,7 +35,9 @@ export function Step5Modules({ data, tier, onNext, onBack }: { data?: Step5Data;
   const limits = TIER_DEFAULTS[tier];
   const [modules, setModules] = useState(data?.modules ?? { customerPwa: true, cashier: true, kitchen: true, waiter: true, admin: true, sms: false, printer: false, kioskMode: false });
   const [defaultLocale, setDefaultLocale] = useState<string>(data?.locale?.default ?? 'tr');
-  const [enabledLocales, setEnabledLocales] = useState<string[]>(data?.locale?.enabled ?? ['tr']);
+  const [enabledLocales, setEnabledLocales] = useState<string[]>(
+    data?.locale?.enabled ?? TIER_DEFAULT_LOCALES[tier],
+  );
 
   function toggleLocale(code: string) {
     if (code === defaultLocale) return; // can't disable default
