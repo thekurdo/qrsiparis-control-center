@@ -145,14 +145,25 @@ export const step03CoolifyAppCreate: PipelineStep = {
     //     loop. Individual failures are warn+continue — env vars aren't
     //     load-bearing for the container to *start*, only to *work*, so
     //     we never throw from this loop.
+    // Env var names follow the customer-app's `src/lib/config/env.ts`
+    // schema (Zod-validated at boot — wrong names crash `next start`
+    // before instrumentation can swallow the error).
+    const appVersion = (ctx.deployment.appVersion?.trim() || 'qrsiparis-app:v0.1.7').split(':').pop() || 'v0.1.7';
     const envs: Array<[string, string]> = [
       ['AUTH_SECRET', randomBytes(32).toString('hex')],
       ['MASTER_KEY', randomBytes(32).toString('hex')],
+      ['SESSION_SECRET', randomBytes(32).toString('hex')],
+      // Customer-app required envs (validated by env.ts at boot).
+      ['DATABASE_PATH', '/data/db.sqlite'],
+      ['ASSETS_PATH', '/data/assets'],
+      ['CONFIG_PATH', '/data/config/restaurant.config.json'],
+      ['RESTAURANT_SHORT_CODE', ctx.tenant.shortCode],
+      ['APP_VERSION', appVersion],
+      // Tenant identity hints (used by pre-start.sh auto-seed + logs).
       ['TENANT_SHORT_CODE', ctx.tenant.shortCode],
       ['TENANT_DOMAIN', ctx.tenant.domain],
       ['TENANT_RESTAURANT_NAME', ctx.tenant.restaurantName],
       ['QRSIPARIS_AUTO_SEED', '1'],
-      ['DATABASE_URL', '/data/db.sqlite'],
     ];
     let envOk = 0;
     for (const [key, value] of envs) {
