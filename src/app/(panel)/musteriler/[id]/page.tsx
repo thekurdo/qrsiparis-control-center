@@ -204,6 +204,29 @@ export default async function TenantDetailPage({
             status={tenant.status}
             containerStatus={tenant.containerStatus}
           />
+          {/* QR-codes PDF export. Plain anchor with `download` so the
+              browser triggers the file save dialog directly — no fetch
+              dance, no client state. Disabled visually for cancelled
+              tenants (the API would 422 those anyway). */}
+          {tenant.status === 'cancelled' ? (
+            <button
+              type="button"
+              disabled
+              className="px-3 py-2 rounded text-sm font-medium bg-slate-700 opacity-50 cursor-not-allowed text-slate-300"
+              title="İptal edilmiş müşteri için QR kodları indirilemez"
+            >
+              QR Kodlarını İndir
+            </button>
+          ) : (
+            <a
+              href={`/api/internal/tenants/${tenant.id}/qr-codes.pdf`}
+              download={`qr-${tenant.shortCode}.pdf`}
+              className="px-3 py-2 rounded text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white"
+              title="10 masa için A4 baskıya hazır QR kod sayfası indirir"
+            >
+              QR Kodlarını İndir
+            </a>
+          )}
           {/* S13 — pause/resume/cancel. Cancelled tenants get a disabled
               row of buttons (TenantLifecycleActions handles that), so the
               UI still shows the available action vocabulary while the
