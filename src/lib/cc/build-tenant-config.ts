@@ -251,7 +251,7 @@ export function buildConfigSnapshot(state: WizardState): RestaurantConfig {
       city: s1.city,
       address: s1.address ?? '',
       phone: s1.phone,
-      email: s1.email && s1.email.length > 0 ? s1.email : `${s1.shortCode}@gewdai.com`,
+      email: s1.email && s1.email.length > 0 ? s1.email : `${s1.shortCode}@siparisqr.com.tr`,
     },
     branding,
     locale: {

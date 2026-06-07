@@ -10,7 +10,10 @@
  *      `siparis.acmepide.com`. Validated as a basic hostname pattern.
  *
  * Base domain comes from `NEXT_PUBLIC_BASE_DOMAIN` (set in CC's Coolify env,
- * `gewdai.com` in prod). We default to `gewdai.com` so local dev "just works".
+ * `siparisqr.com.tr` in prod). NOTE: this is a NEXT_PUBLIC_* var, so it is
+ * inlined at BUILD time — the Dockerfile must pass it as a build arg for the
+ * env override to take effect. The fallback below is the prod default so a
+ * missing build arg still produces a correct build.
  *
  * Editability rule:
  *   `domainManuallyEdited` flag — flipped true the moment the operator types
@@ -30,7 +33,7 @@ import type { Step3Data } from './TenantWizardClient';
 
 // Base domain for the bizden-alt-domain mode. Override per environment via
 // NEXT_PUBLIC_BASE_DOMAIN; default keeps local dev sane.
-const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN ?? 'gewdai.com';
+const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN ?? 'siparisqr.com.tr';
 
 // Hostname validation — single-label minimum, accepts dotted labels with
 // hyphens, max 253 chars. Doesn't enforce TLD presence (operators sometimes

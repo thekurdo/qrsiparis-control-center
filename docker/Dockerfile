@@ -37,6 +37,12 @@ ENV APP_VERSION=$APP_VERSION
 ENV GIT_COMMIT=$GIT_COMMIT
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Public base domain for tenant subdomains — inlined into the client bundle at
+# build time (NEXT_PUBLIC_*). Override per-environment via the compose build
+# arg; defaults to the prod domain so a missing arg still yields a correct build.
+ARG NEXT_PUBLIC_BASE_DOMAIN=siparisqr.com.tr
+ENV NEXT_PUBLIC_BASE_DOMAIN=$NEXT_PUBLIC_BASE_DOMAIN
+
 # Next.js's "Collecting page data" phase evaluates route handlers, which
 # can hit code that reads env (e.g. DB url, MASTER_KEY). Provide buildtime
 # placeholders here so the build doesn't crash. Runtime env in the

@@ -19,6 +19,10 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: app
+      args:
+        # Inlined into the client bundle at build time (NEXT_PUBLIC_*). Coolify
+        # passes this through; defaults to the prod domain in the Dockerfile.
+        NEXT_PUBLIC_BASE_DOMAIN: ${NEXT_PUBLIC_BASE_DOMAIN:-siparisqr.com.tr}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -26,7 +30,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      # Coolify magic: SERVICE_FQDN_APP_3001 resolves to https://panel.gewdai.com
+      # Coolify magic: SERVICE_FQDN_APP_3001 resolves to https://panel.siparisqr.com.tr
       # (or whatever domain the operator binds in the Coolify UI).
       - NODE_ENV=production
       - PORT=3001
