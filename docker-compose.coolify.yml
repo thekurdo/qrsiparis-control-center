@@ -30,13 +30,17 @@ services:
       redis:
         condition: service_healthy
     environment:
-      # Coolify magic: SERVICE_FQDN_APP_3001 resolves to https://panel.siparisqr.com.tr
-      # (or whatever domain the operator binds in the Coolify UI).
+      # Coolify magic: SERVICE_FQDN_APP_3001 tells Coolify to route the bound
+      # domain to port 3001. MUST carry a `=` — a bare list entry gets
+      # re-serialized by Coolify into a numeric map key (`0: SERVICE_FQDN_APP_3001`)
+      # and docker compose then fails with "non-string key". Traefik's upstream
+      # port actually comes from the Dockerfile EXPOSE 3001, so the empty value
+      # is safe; the app never reads this var.
       - NODE_ENV=production
       - PORT=3001
       - LOG_LEVEL=info
       - TEST_MODE=
-      - SERVICE_FQDN_APP_3001
+      - SERVICE_FQDN_APP_3001=
       - DATABASE_URL=postgres://qrsiparis:${POSTGRES_PASSWORD}@postgres:5432/qrsiparis_cc
       - REDIS_URL=redis://redis:6379
       - AUTH_SECRET=${AUTH_SECRET}
